@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Codebeautify.org Text to HTML Converter</title>
+	</head>
+	<body>
+		<p>
+			<!DOCTYPE html>
+			<html lang="de">
+				<head>
+					<meta charset="UTF-8">
+						<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+							<title>CloudStream AI</title>
+							<script src="https://cdn.tailwindcss.com"></script>
+							<script src="https://unpkg.com/lucide@latest"></script>
+							<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+							<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+							<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+							<style> 
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap'); 
+        body { font-family: 'Inter', sans-serif; background-color: #050505; color: white; margin: 0; -webkit-tap-highlight-color: transparent; } 
+        .ios-blur { backdrop-filter: blur(25px) saturate(200%); -webkit-backdrop-filter: blur(25px) saturate(200%); } 
+        .no-scrollbar::-webkit-scrollbar { display: none; } 
+        .loader { border: 3px solid rgba(255, 255, 255, 0.1); border-top: 3px solid #3b82f6; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; } 
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } } 
+        input:focus { ring: 2px solid #3b82f6; } 
+    </style>
+						</head>
+						<body>
+							<div id="root"></div>
+							<script type="module"> 
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js"; 
+        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js"; 
+        import { getFirestore, doc, collection, onSnapshot, addDoc, deleteDoc, serverTimestamp, query } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js"; 
+ 
+        window.FirebaseSDK = { initializeApp, getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, getFirestore, doc, collection, onSnapshot, addDoc, deleteDoc, serverTimestamp, query }; 
+    </script>
+							<script type="text/babel"> 
+        const { useState, useEffect, useMemo } = React; 
+ 
+        // DEINE KONFIGURATION 
+        const firebaseConfig = { 
+            apiKey: "AIzaSyDi9s3g6nyObg5mZYz_n7qgr982h2MrO0o", 
+            authDomain: "cloud-ai-a1722.firebaseapp.com", 
+            projectId: "cloud-ai-a1722", 
+            storageBucket: "cloud-ai-a1722.firebasestorage.app", 
+            messagingSenderId: "94852405834", 
+            appId: "1:94852405834:web:4bba853d9a20807b84a4b3" 
+        }; 
+ 
+        const Icon = ({ name, size = 24, className = "" }) => { 
+            if (!window.lucide?.icons) return 
+								<div style={{width: size, height: size}} className={className} />; 
+            const LucideIcon = window.lucide.icons[name]; 
+            return LucideIcon ? 
+								<LucideIcon size={size} className={className} /> : null; 
+        }; 
+ 
+        const App = () => { 
+            const [view, setView] = useState('home'); 
+            const [user, setUser] = useState(null); 
+            const [fbReady, setFbReady] = useState(false); 
+            const [db, setDb] = useState(null); 
+            const [auth, setAuth] = useState(null); 
+             
+            // Auth States 
+            const [email, setEmail] = useState(''); 
+            const [password, setPassword] = useState(''); 
+            const [isRegister, setIsRegister] = useState(false); 
+            const [authError, setAuthError] = useState(''); 
+            const [loading, setLoading] = useState(false); 
+ 
+            // KI & Data States 
+            const [groqKey, setGroqKey] = useState(localStorage.getItem('groq_api_key') || ''); 
+            const [favorites, setFavorites] = useState([]); 
+            const [history, setHistory] = useState([]); 
+ 
+            useEffect(() => { 
+                const init = async () => { 
+                    const { initializeApp, getAuth, getFirestore, onAuthStateChanged } = window.FirebaseSDK; 
+                    try { 
+                        const fbApp = initializeApp(firebaseConfig); 
+                        const fbAuth = getAuth(fbApp); 
+                        const fbDb = getFirestore(fbApp); 
+                        setAuth(fbAuth); 
+                        setDb(fbDb); 
+                        onAuthStateChanged(fbAuth, (u) => { 
+                            setUser(u); 
+                            setFbReady(true); 
+                        }); 
+                    } catch (e) { console.error("Firebase Init Error", e); } 
+                }; 
+ 
+                const wait = setInterval(() => { 
+                    if (window.FirebaseSDK && window.lucide) { 
+                        clearInterval(wait); 
+                        init(); 
+                    } 
+                }, 100); 
+            }, []); 
+ 
+            useEffect(() => { 
+                if (!user || !db) return; 
+                const { collection, onSnapshot } = window.FirebaseSDK; 
+                const path = ['artifacts', 'cloudstream-web-ai', 'users', user.uid]; 
+                 
+                const unsubFav = onSnapshot(collection(db, ...path, 'favorites'), s => setFavorites(s.docs.map(d => ({id: d.id, ...d.data()})))); 
+                const unsubHist = onSnapshot(collection(db, ...path, 'history'), s => { 
+                    const data = s.docs.map(d => ({id: d.id, ...d.data()})); 
+                    setHistory(data.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0))); 
+                }); 
+                return () => { unsubFav(); unsubHist(); }; 
+            }, [user, db]); 
+ 
+            const handleAuth = async (e) => { 
+                e.preventDefault(); 
+                setLoading(true); 
+                setAuthError(''); 
+                const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = window.FirebaseSDK; 
+                try { 
+                    if (isRegister) await createUserWithEmailAndPassword(auth, email, password); 
+                    else await signInWithEmailAndPassword(auth, email, password); 
+                } catch (err) { setAuthError("Fehler: " + err.message); } 
+                setLoading(false); 
+            }; 
+ 
+            // Views 
+            if (!fbReady) return 
+								<div className="min-h-screen flex items-center justify-center">
+									<div className="loader"></div>
+								</div>; 
+ 
+            if (!user) return ( 
+                
+								<div className="min-h-screen flex items-center justify-center p-8 bg-[#050505]">
+									<div className="w-full max-w-sm space-y-8 animate-in fade-in zoom-in-95 duration-500">
+										<div className="text-center">
+											<h1 className="text-5xl font-black italic tracking-tighter text-blue-600">CloudStream</h1>
+											<p className="text-gray-500 text-xs mt-3 uppercase tracking-[0.3em] font-bold">AI Powered Streaming</p>
+										</div>
+										<form onSubmit={handleAuth} className="space-y-4 bg-[#121212] p-8 rounded-[40px] border border-white/5 shadow-2xl">
+											<input type="email" placeholder="E-Mail" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-sm outline-none" value={email} onChange={e => setEmail(e.target.value)} required />
+											<input type="password" placeholder="Passwort" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-sm outline-none" value={password} onChange={e => setPassword(e.target.value)} required /> 
+                            {authError && 
+											<p className="text-red-500 text-[10px] px-2">{authError}</p>} 
+                            
+											<button disabled={loading} className="w-full bg-blue-600 py-4 rounded-[20px] font-black text-sm uppercase tracking-widest shadow-lg shadow-blue-600/20 active:scale-95 transition-all"> 
+                                {loading ? 'Warten...' : (isRegister ? 'Registrieren' : 'Anmelden')} 
+                            </button>
+										</form>
+										<button onClick={() => setIsRegister(!isRegister)} className="w-full text-gray-500 text-[10px] font-black uppercase tracking-widest"> 
+                            {isRegister ? 'Zum Login wechseln' : 'Neues Konto erstellen'} 
+                        </button>
+									</div>
+								</div> 
+            ); 
+ 
+            const renderContent = () => { 
+                switch(view) { 
+                    case 'home': return ( 
+                        
+								<div className="space-y-10 animate-in fade-in">
+									<header className="flex justify-between items-center pt-6">
+										<h1 className="text-4xl font-black italic tracking-tighter">Entdecken</h1>
+										<div className="p-3 bg-blue-600/10 rounded-2xl text-blue-500">
+											<Icon name="Zap" />
+										</div>
+									</header> 
+                            {history.length > 0 && ( 
+                                
+									<section className="animate-in slide-in-from-right-4">
+										<h3 className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-4 px-1">Zuletzt gesehen</h3>
+										<div className="flex gap-4 overflow-x-auto no-scrollbar -mx-6 px-6"> 
+                                        {history.slice(0, 8).map((m, i) => ( 
+                                            
+											<div key={i} onClick={() => { setSelectedMedia(m); setView('details'); }} className="w-28 shrink-0 active:scale-90 transition-transform">
+												<div className="aspect-[2/3] rounded-2xl overflow-hidden border border-white/5 shadow-lg mb-2">
+													<img src={m.poster} className="w-full h-full object-cover" />
+												</div>
+												<p className="text-[9px] font-bold truncate opacity-50 uppercase">{m.title}</p>
+											</div> 
+                                        ))} 
+                                    
+										</div>
+									</section> 
+                            )} 
+                            
+									<section>
+										<h3 className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-4 px-1">Top Trends</h3>
+										<div className="grid grid-cols-2 gap-5"> 
+                                    {[1, 2, 3, 4].map(i => ( 
+                                        
+											<div key={i} onClick={() => { setSelectedMedia({title: 'Top Movie '+i, poster: `https://images.unsplash.com/photo-${1626814026160+i}-2237a95fc5a0?w=400`, year: '2024'}); setView('details'); }} className="aspect-[2/3] bg-[#121212] rounded-[32px] overflow-hidden border border-white/5 relative active:scale-95 transition-transform shadow-xl">
+												<img src={`https://images.unsplash.com/photo-${1626814026160+i}-2237a95fc5a0?w=400`} className="w-full h-full object-cover" />
+												<div className="absolute inset-0 bg-gradient-to-t from-black p-5 flex flex-col justify-end text-[11px] font-black italic">TRENDING {i}</div>
+											</div> 
+                                    ))} 
+                                
+										</div>
+									</section>
+								</div> 
+                    ); 
+                    case 'library': return ( 
+                        
+								<div className="space-y-8 animate-in fade-in pt-6">
+									<h1 className="text-4xl font-black italic tracking-tighter">Mediathek</h1> 
+                            {favorites.length > 0 ? ( 
+                                
+									<div className="grid grid-cols-2 gap-5"> 
+                                    {favorites.map((f, i) => ( 
+                                        
+										<div key={i} onClick={() => { setSelectedMedia(f); setView('details'); }} className="aspect-[2/3] bg-[#121212] rounded-[32px] overflow-hidden border border-white/5 relative">
+											<img src={f.poster} className="w-full h-full object-cover" />
+											<div className="absolute inset-0 bg-gradient-to-t from-black p-4 flex flex-col justify-end font-black text-xs italic">{f.title}</div>
+										</div> 
+                                    ))} 
+                                
+									</div> 
+                            ) : ( 
+                                
+									<div className="py-20 text-center opacity-20">
+										<Icon name="Heart" size={60} className="mx-auto mb-4" />
+										<p className="font-bold text-xs uppercase tracking-widest">Leer</p>
+									</div> 
+                            )} 
+                        
+								</div> 
+                    ); 
+                    case 'settings': return ( 
+                        
+								<div className="space-y-8 animate-in fade-in pt-6">
+									<h1 className="text-4xl font-black italic tracking-tighter">Konfig</h1>
+									<div className="bg-[#121212] p-8 rounded-[40px] border border-white/5 space-y-8">
+										<div>
+											<h3 className="text-[10px] font-black uppercase text-gray-600 mb-3 tracking-widest">Groq AI Key</h3>
+											<input type="password" value={groqKey} onChange={e => { setGroqKey(e.target.value); localStorage.setItem('groq_api_key', e.target.value); }} className="w-full bg-black border border-white/10 rounded-2xl p-4 text-xs font-mono" placeholder="gsk_..." />
+										</div>
+										<div className="pt-6 border-t border-white/5 space-y-4">
+											<p className="text-[10px] text-gray-600 text-center">Eingeloggt als: 
+												<br/>
+												<span className="text-white font-bold">{user.email}</span>
+											</p>
+											<button onClick={() => window.FirebaseSDK.signOut(auth)} className="w-full bg-red-500/10 text-red-500 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest">Abmelden</button>
+										</div>
+									</div>
+								</div> 
+                    ); 
+                    case 'details': return ( 
+                        
+								<div className="animate-in slide-in-from-bottom-10 space-y-10 pt-6">
+									<div className="flex justify-between items-center px-2">
+										<button onClick={() => setView('home')} className="p-4 bg-[#121212] rounded-3xl border border-white/5 active:scale-90 transition-transform">
+											<Icon name="ChevronLeft" size={28}/>
+										</button>
+										<button onClick={async () => { 
+                                    const existing = favorites.find(f => f.title === selectedMedia.title); 
+                                    const col = collection(db, 'artifacts', 'cloudstream-web-ai', 'users', user.uid, 'favorites'); 
+                                    if (existing) await deleteDoc(doc(db, 'artifacts', 'cloudstream-web-ai', 'users', user.uid, 'favorites', existing.id)); 
+                                    else await addDoc(col, { ...selectedMedia, timestamp: serverTimestamp() }); 
+                                }} className={`p-4 rounded-3xl border transition-all ${favorites.some(f => f.title === selectedMedia.title) ? 'bg-red-500/20 border-red-500 text-red-500' : 'bg-[#121212] border-white/5 text-gray-500'}`}>
+											<Icon name="Heart" size={28} fill={favorites.some(f => f.title === selectedMedia.title) ? "currentColor" : "none"} />
+										</button>
+									</div>
+									<div className="aspect-[2/3] w-full max-w-[280px] mx-auto rounded-[48px] overflow-hidden shadow-2xl ring-1 ring-white/10">
+										<img src={selectedMedia.poster} className="w-full h-full object-cover" />
+									</div>
+									<h2 className="text-4xl font-black text-center italic tracking-tighter px-4">{selectedMedia.title}</h2>
+									<button onClick={async () => { 
+                                const col = collection(db, 'artifacts', 'cloudstream-web-ai', 'users', user.uid, 'history'); 
+                                await addDoc(col, { ...selectedMedia, timestamp: serverTimestamp() }); 
+                                setView('player'); 
+                            }} className="w-full py-6 bg-blue-600 rounded-[32px] font-black text-xl shadow-xl shadow-blue-600/20 active:scale-95 transition-all">STREAM STARTEN</button>
+								</div> 
+                    ); 
+                    case 'player': return ( 
+                        
+								<div className="fixed inset-0 bg-black z-[200] flex flex-col items-center justify-center p-10 text-center animate-in fade-in">
+									<button onClick={() => setView('details')} className="absolute top-16 left-8 opacity-30">
+										<Icon name="ChevronLeft" size={40}/>
+									</button>
+									<div className="loader mb-8 shadow-[0_0_20px_rgba(59,130,246,0.5)]"></div>
+									<h2 className="text-2xl font-black italic mb-2 tracking-tighter">KI Mirror Check...</h2>
+									<p className="text-[10px] text-gray-600 font-bold uppercase tracking-widest">Validierung läuft</p>
+								</div> 
+                    ); 
+                    default: return null; 
+                } 
+            }; 
+ 
+            return ( 
+                
+								<div className="min-h-screen pb-32 px-6 max-w-xl mx-auto"> 
+                    {renderContent()} 
+                    {view !== 'player' && ( 
+                        
+									<nav className="fixed bottom-0 left-0 right-0 ios-blur bg-black/60 border-t border-white/5 pb-10 pt-4 px-10 flex justify-around z-50">
+										<button onClick={() => setView('home')} className={`p-4 rounded-2xl ${view === 'home' ? 'text-blue-500 scale-110' : 'text-gray-700'}`}>
+											<Icon name="Home" />
+										</button>
+										<button onClick={() => setView('library')} className={`p-4 rounded-2xl ${view === 'library' ? 'text-blue-500 scale-110' : 'text-gray-700'}`}>
+											<Icon name="Library" />
+										</button>
+										<button onClick={() => setView('settings')} className={`p-4 rounded-2xl ${view === 'settings' ? 'text-blue-500 scale-110' : 'text-gray-700'}`}>
+											<Icon name="Settings" />
+										</button>
+									</nav> 
+                    )} 
+                
+								</div> 
+            ); 
+        }; 
+ 
+        const root = ReactDOM.createRoot(document.getElementById('root')); 
+        root.render(
+								<App />); 
+    
+							</script>
+						</body>
+					</html>
+				</p>
+			</body>
+		</html>
