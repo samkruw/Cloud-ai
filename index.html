@@ -1,278 +1,4 @@
 <!DOCTYPE html>
-<html lang="de">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>CloudStream AI</title>
-    
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: { extend: { fontFamily: { sans: ['Inter', 'sans-serif'] } } }
-        }
-    </script>
-
-    <script src="https://unpkg.com/lucide@latest"></script>
-    
-    <script type="importmap">
-    {
-      "imports": {
-        "react": "https://esm.sh/react@18.2.0?dev",
-        "react-dom": "https://esm.sh/react-dom@18.2.0/client?dev"
-      }
-    }
-    </script>
-    
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { background-color: #050505; color: white; margin: 0; -webkit-tap-highlight-color: transparent; }
-        .ios-blur { backdrop-filter: blur(25px) saturate(200%); -webkit-backdrop-filter: blur(25px) saturate(200%); }
-        .loader { border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-    </style>
-</head>
-<body>
-    <div id="root">
-        <div id="loading-screen" style="height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 20px;">
-            <div class="loader"></div>
-            <p style="font-family: sans-serif; font-size: 12px; color: #666; letter-spacing: 2px;">INITIALISIERE CORE...</p>
-        </div>
-    </div>
-
-    <script type="module">
-        import React from 'react';
-        import ReactDOM from 'react-dom';
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
-        import { getFirestore, doc, collection, onSnapshot, addDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
-
-        const firebaseConfig = {
-            apiKey: "AIzaSyDi9s3g6nyObg5mZYz_n7qgr982h2MrO0o",
-            authDomain: "cloud-ai-a1722.firebaseapp.com",
-            projectId: "cloud-ai-a1722",
-            storageBucket: "cloud-ai-a1722.firebasestorage.app",
-            messagingSenderId: "94852405834",
-            appId: "1:94852405834:web:4bba853d9a20807b84a4b3"
-        };
-
-        const App = () => {
-            const [user, setUser] = React.useState(null);
-            const [isBooting, setIsBooting] = React.useState(true);
-            const [auth, setAuth] = React.useState(null);
-            const [email, setEmail] = React.useState('');
-            const [password, setPassword] = React.useState('');
-            const [error, setError] = React.useState('');
-
-            React.useEffect(() => {
-                try {
-                    const app = initializeApp(firebaseConfig);
-                    const fbAuth = getAuth(app);
-                    setAuth(fbAuth);
-                    
-                    const unsub = onAuthStateChanged(fbAuth, (u) => {
-                        setUser(u);
-                        setIsBooting(false);
-                        // Entferne den statischen Ladebildschirm
-                        const ls = document.getElementById('loading-screen');
-                        if (ls) ls.remove();
-                    });
-                    return unsub;
-                } catch (e) {
-                    console.error(e);
-                    setError("Firebase Startfehler: " + e.message);
-                    setIsBooting(false);
-                }
-            }, []);
-
-            if (isBooting) return null;
-
-            if (!user) {
-                return React.createElement('div', { className: 'min-h-screen flex items-center justify-center p-8 flex-col gap-8 animate-in fade-in duration-700' },
-                    React.createElement('h1', { className: 'text-5xl font-black italic text-blue-600 tracking-tighter' }, 'CloudStream'),
-                    React.createElement('div', { className: 'w-full max-w-sm bg-[#121212] p-8 rounded-[40px] border border-white/5 shadow-2xl space-y-4' },
-                        React.createElement('input', { 
-                            type: 'email', placeholder: 'E-Mail', 
-                            className: 'w-full bg-black border border-white/10 p-4 rounded-2xl outline-none text-white',
-                            value: email, onChange: e => setEmail(e.target.value) 
-                        }),
-                        React.createElement('input', { 
-                            type: 'password', placeholder: 'Passwort', 
-                            className: 'w-full bg-black border border-white/10 p-4 rounded-2xl outline-none text-white',
-                            value: password, onChange: e => setPassword(e.target.value) 
-                        }),
-                        error && React.createElement('p', { className: 'text-red-500 text-[10px] text-center italic' }, error),
-                        React.createElement('button', { 
-                            onClick: async () => {
-                                try { await signInWithEmailAndPassword(auth, email, password); }
-                                catch (e) { setError(e.message); }
-                            },
-                            className: 'w-full bg-blue-600 py-4 rounded-[20px] font-black uppercase tracking-widest text-sm active:scale-95 transition-transform' 
-                        }, 'Anmelden')
-                    )
-                );
-            }
-
-            return React.createElement('div', { className: 'p-10 text-center space-y-6' },
-                React.createElement('h1', { className: 'text-3xl font-black italic' }, 'Eingeloggt!'),
-                React.createElement('p', { className: 'text-gray-500' }, user.email),
-                React.createElement('button', { 
-                    onClick: () => signOut(auth),
-                    className: 'bg-red-500/10 text-red-500 px-6 py-2 rounded-xl text-xs font-bold uppercase' 
-                }, 'Abmelden')
-            );
-        };
-
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(React.createElement(App));
-    </script>
-</body>
-</html>
-<!DOCTYPE html>
-<html lang="de">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>CloudStream AI</title>
-    
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                    },
-                }
-            }
-        }
-    </script>
-
-    <script src="https://unpkg.com/lucide@latest"></script>
-    
-    <script type="importmap">
-    {
-      "imports": {
-        "react": "https://esm.sh/react@18.2.0",
-        "react-dom": "https://esm.sh/react-dom@18.2.0/client"
-      }
-    }
-    </script>
-    
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { background-color: #050505; color: white; margin: 0; -webkit-tap-highlight-color: transparent; }
-        .ios-blur { backdrop-filter: blur(25px) saturate(200%); -webkit-backdrop-filter: blur(25px) saturate(200%); }
-        .loader { border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid #3b82f6; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
-
-    <script type="module">
-        import React, { useState, useEffect } from 'react';
-        import ReactDOM from 'react-dom';
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
-        import { getFirestore, doc, collection, onSnapshot, addDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
-
-        // Deine Firebase Config
-        const firebaseConfig = {
-            apiKey: "AIzaSyDi9s3g6nyObg5mZYz_n7qgr982h2MrO0o",
-            authDomain: "cloud-ai-a1722.firebaseapp.com",
-            projectId: "cloud-ai-a1722",
-            storageBucket: "cloud-ai-a1722.firebasestorage.app",
-            messagingSenderId: "94852405834",
-            appId: "1:94852405834:web:4bba853d9a20807b84a4b3"
-        };
-
-        const Icon = ({ name, size = 24, className = "" }) => {
-            const LucideIcon = window.lucide?.icons[name];
-            return LucideIcon ? React.createElement(LucideIcon, { size, className }) : null;
-        };
-
-        const App = () => {
-            const [view, setView] = useState('home');
-            const [user, setUser] = useState(null);
-            const [loading, setLoading] = useState(true);
-            const [auth, setAuth] = useState(null);
-            const [db, setDb] = useState(null);
-            const [email, setEmail] = useState('');
-            const [password, setPassword] = useState('');
-            const [isRegister, setIsRegister] = useState(false);
-            const [error, setError] = useState('');
-
-            useEffect(() => {
-                const app = initializeApp(firebaseConfig);
-                const fbAuth = getAuth(app);
-                const fbDb = getFirestore(app);
-                setAuth(fbAuth);
-                setDb(fbDb);
-
-                return onAuthStateChanged(fbAuth, (u) => {
-                    setUser(u);
-                    setLoading(false);
-                });
-            }, []);
-
-            const handleAuth = async (e) => {
-                e.preventDefault();
-                setError('');
-                try {
-                    if (isRegister) await createUserWithEmailAndPassword(auth, email, password);
-                    else await signInWithEmailAndPassword(auth, email, password);
-                } catch (err) {
-                    setError(err.message);
-                }
-            };
-
-            if (loading) return React.createElement('div', { className: 'min-h-screen flex items-center justify-center' }, React.createElement('div', { className: 'loader' }));
-
-            if (!user) {
-                return React.createElement('div', { className: 'min-h-screen flex items-center justify-center p-8' }, 
-                    React.createElement('div', { className: 'w-full max-w-sm space-y-8' },
-                        React.createElement('div', { className: 'text-center' },
-                            React.createElement('h1', { className: 'text-5xl font-black italic text-blue-600 tracking-tighter' }, 'CloudStream'),
-                            React.createElement('p', { className: 'text-[10px] text-gray-500 uppercase tracking-[0.3em] mt-2 font-bold' }, 'AI Powered')
-                        ),
-                        React.createElement('form', { onSubmit: handleAuth, className: 'space-y-4 bg-[#121212] p-8 rounded-[40px] border border-white/5 shadow-2xl' },
-                            React.createElement('input', { type: 'email', placeholder: 'E-Mail', className: 'w-full bg-black border border-white/10 p-4 rounded-2xl outline-none text-sm', value: email, onChange: e => setEmail(e.target.value) }),
-                            React.createElement('input', { type: 'password', placeholder: 'Passwort', className: 'w-full bg-black border border-white/10 p-4 rounded-2xl outline-none text-sm', value: password, onChange: e => setPassword(e.target.value) }),
-                            error && React.createElement('p', { className: 'text-red-500 text-[10px] italic px-2' }, error),
-                            React.createElement('button', { className: 'w-full bg-blue-600 py-4 rounded-[20px] font-black tracking-widest text-sm uppercase shadow-lg shadow-blue-600/20' }, isRegister ? 'Registrieren' : 'Anmelden')
-                        ),
-                        React.createElement('button', { onClick: () => setIsRegister(!isRegister), className: 'w-full text-gray-600 text-[10px] font-bold uppercase tracking-widest' }, 
-                            isRegister ? 'Zum Login wechseln' : 'Neues Konto erstellen')
-                    )
-                );
-            }
-
-            return React.createElement('div', { className: 'min-h-screen p-6' },
-                React.createElement('header', { className: 'pt-6 flex justify-between items-center' }, 
-                    React.createElement('div', null,
-                        React.createElement('h1', { className: 'text-4xl font-black italic tracking-tighter' }, 'Mediathek'),
-                        React.createElement('p', { className: 'text-gray-500 text-[10px] uppercase font-bold mt-1 tracking-widest' }, user.email)
-                    ),
-                    React.createElement('button', { onClick: () => signOut(auth), className: 'p-3 bg-[#121212] rounded-2xl border border-white/5 text-red-500' }, React.createElement(Icon, { name: 'LogOut', size: 20 }))
-                ),
-                React.createElement('div', { className: 'mt-12 text-center opacity-20' }, 
-                    React.createElement(Icon, { name: 'Zap', size: 64, className: 'mx-auto mb-4' }),
-                    React.createElement('p', { className: 'text-xs font-bold uppercase tracking-widest' }, 'Bereit für Streams')
-                ),
-                React.createElement('nav', { className: 'fixed bottom-0 left-0 right-0 ios-blur bg-black/60 p-8 pb-10 flex justify-around border-t border-white/5' },
-                    React.createElement('button', { onClick: () => setView('home'), className: 'text-blue-500' }, React.createElement(Icon, { name: 'Home' })),
-                    React.createElement('button', { onClick: () => setView('search'), className: 'text-gray-500' }, React.createElement(Icon, { name: 'Search' })),
-                    React.createElement('button', { onClick: () => setView('settings'), className: 'text-gray-500' }, React.createElement(Icon, { name: 'Settings' }))
-                )
-            );
-        };
-
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(React.createElement(App));
-    </script>
-</body>
-</html>
-<!DOCTYPE html>
 <html>
 	<head>
 		<title>Codebeautify.org Text to HTML Converter</title>
@@ -287,115 +13,106 @@
 							<title>CloudStream AI</title>
 							<script src="https://cdn.tailwindcss.com"></script>
 							<script src="https://unpkg.com/lucide@latest"></script>
-							<script type="importmap"> 
-    { 
-      "imports": { 
-        "react": "https://esm.sh/react@18.2.0", 
-        "react-dom": "https://esm.sh/react-dom@18.2.0/client" 
-      } 
-    } 
-    </script>
+							<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+							<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 							<style> 
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap'); 
-        body { font-family: 'Inter', sans-serif; background-color: #050505; color: white; margin: 0; -webkit-tap-highlight-color: transparent; overflow-x: hidden; } 
-        .ios-blur { backdrop-filter: blur(25px) saturate(200%); -webkit-backdrop-filter: blur(25px) saturate(200%); } 
-        .loader { border: 3px solid rgba(255, 255, 255, 0.1); border-top: 3px solid #3b82f6; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; } 
+        body { background-color: #050505; color: white; margin: 0; font-family: 'Inter', sans-serif; } 
+        .loader { border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; } 
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } } 
     </style>
 						</head>
 						<body>
-							<div id="root"></div>
+							<div id="root">
+								<div id="loading-screen" style="height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 20px;">
+									<div class="loader"></div>
+									<p id="status-text" style="font-size: 10px; color: #666; letter-spacing: 2px; font-weight: bold;">LADE MODULE...</p>
+									<div id="error-log" style="color: #ef4444; font-size: 10px; max-width: 80%; text-align: center;"></div>
+								</div>
+							</div>
 							<script type="module"> 
-        import React, { useState, useEffect } from 'react'; 
-        import ReactDOM from 'react-dom'; 
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js"; 
-        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js"; 
-        import { getFirestore, doc, collection, onSnapshot, addDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js"; 
+        const status = document.getElementById('status-text'); 
+        const errorLog = document.getElementById('error-log'); 
  
-        const firebaseConfig = { 
-            apiKey: "AIzaSyDi9s3g6nyObg5mZYz_n7qgr982h2MrO0o", 
-            authDomain: "cloud-ai-a1722.firebaseapp.com", 
-            projectId: "cloud-ai-a1722", 
-            storageBucket: "cloud-ai-a1722.firebasestorage.app", 
-            messagingSenderId: "94852405834", 
-            appId: "1:94852405834:web:4bba853d9a20807b84a4b3" 
-        }; 
+        try { 
+            status.innerText = "VERBINDE FIREBASE..."; 
+             
+            import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js"; 
+            import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js"; 
+            import { getFirestore } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js"; 
  
-        const Icon = ({ name, size = 24, className = "" }) => { 
-            const LucideIcon = window.lucide?.icons[name]; 
-            return LucideIcon ? React.createElement(LucideIcon, { size, className }) : null; 
-        }; 
- 
-        const App = () => { 
-            const [view, setView] = useState('home'); 
-            const [user, setUser] = useState(null); 
-            const [loading, setLoading] = useState(true); 
-            const [auth, setAuth] = useState(null); 
-            const [db, setDb] = useState(null); 
-            const [email, setEmail] = useState(''); 
-            const [password, setPassword] = useState(''); 
-            const [isRegister, setIsRegister] = useState(false); 
-            const [error, setError] = useState(''); 
- 
-            useEffect(() => { 
-                const app = initializeApp(firebaseConfig); 
-                const fbAuth = getAuth(app); 
-                const fbDb = getFirestore(app); 
-                setAuth(fbAuth); 
-                setDb(fbDb); 
- 
-                return onAuthStateChanged(fbAuth, (u) => { 
-                    setUser(u); 
-                    setLoading(false); 
-                }); 
-            }, []); 
- 
-            const handleAuth = async (e) => { 
-                e.preventDefault(); 
-                setError(''); 
-                try { 
-                    if (isRegister) await createUserWithEmailAndPassword(auth, email, password); 
-                    else await signInWithEmailAndPassword(auth, email, password); 
-                } catch (err) { 
-                    setError(err.message.includes('auth/domain-config-required')  
-                        ? "Fehler: Domain 'samkruw.github.io' muss in Firebase autorisiert werden!"  
-                        : err.message); 
-                } 
+            const firebaseConfig = { 
+                apiKey: "AIzaSyDi9s3g6nyObg5mZYz_n7qgr982h2MrO0o", 
+                authDomain: "cloud-ai-a1722.firebaseapp.com", 
+                projectId: "cloud-ai-a1722", 
+                storageBucket: "cloud-ai-a1722.firebasestorage.app", 
+                messagingSenderId: "94852405834", 
+                appId: "1:94852405834:web:4bba853d9a20807b84a4b3" 
             }; 
  
-            if (loading) return React.createElement('div', { className: 'min-h-screen flex items-center justify-center' }, React.createElement('div', { className: 'loader' })); 
+            const app = initializeApp(firebaseConfig); 
+            const auth = getAuth(app); 
+            const db = getFirestore(app); 
  
-            if (!user) { 
-                return React.createElement('div', { className: 'min-h-screen flex items-center justify-center p-8' },  
-                    React.createElement('div', { className: 'w-full max-w-sm space-y-8' }, 
-                        React.createElement('h1', { className: 'text-5xl font-black italic text-center text-blue-600' }, 'CloudStream'), 
-                        React.createElement('form', { onSubmit: handleAuth, className: 'space-y-4 bg-[#121212] p-8 rounded-[40px] border border-white/5 shadow-2xl' }, 
-                            React.createElement('input', { type: 'email', placeholder: 'E-Mail', className: 'w-full bg-black border border-white/10 p-4 rounded-2xl outline-none', value: email, onChange: e => setEmail(e.target.value) }), 
-                            React.createElement('input', { type: 'password', placeholder: 'Passwort', className: 'w-full bg-black border border-white/10 p-4 rounded-2xl outline-none', value: password, onChange: e => setPassword(e.target.value) }), 
-                            error && React.createElement('p', { className: 'text-red-500 text-[10px] leading-tight' }, error), 
-                            React.createElement('button', { className: 'w-full bg-blue-600 py-4 rounded-[20px] font-black' }, isRegister ? 'KONTO ERSTELLEN' : 'ANMELDEN') 
-                        ), 
-                        React.createElement('button', { onClick: () => setIsRegister(!isRegister), className: 'w-full text-gray-600 text-[10px] font-bold uppercase tracking-widest' },  
-                            isRegister ? 'Zum Login' : 'Registrieren') 
-                    ) 
+            status.innerText = "REDEEME CORE..."; 
+ 
+            const App = () => { 
+                const [user, setUser] = React.useState(null); 
+                const [email, setEmail] = React.useState(''); 
+                const [password, setPassword] = React.useState(''); 
+                const [err, setErr] = React.useState(''); 
+ 
+                React.useEffect(() => { 
+                    const unsub = onAuthStateChanged(auth, (u) => { 
+                        setUser(u); 
+                        const ls = document.getElementById('loading-screen'); 
+                        if (ls) ls.style.display = 'none'; 
+                    }); 
+                    return unsub; 
+                }, []); 
+ 
+                if (!user) { 
+                    return ( 
+                        
+								<div className="min-h-screen flex items-center justify-center p-8 flex-col gap-10">
+									<h1 className="text-5xl font-black italic text-blue-600 tracking-tighter">CloudStream</h1>
+									<div className="w-full max-w-sm bg-[#121212] p-8 rounded-[40px] border border-white/5 shadow-2xl space-y-4">
+										<input type="email" placeholder="E-Mail" className="w-full bg-black border border-white/10 p-4 rounded-2xl outline-none text-white text-sm" value={email} onChange={e => setEmail(e.target.value)} />
+										<input type="password" placeholder="Passwort" className="w-full bg-black border border-white/10 p-4 rounded-2xl outline-none text-white text-sm" value={password} onChange={e => setPassword(e.target.value)} /> 
+                                {err && 
+										<p className="text-red-500 text-[10px] text-center">{err}</p>} 
+                                
+										<button onClick={async () => { 
+                                    try { await signInWithEmailAndPassword(auth, email, password); } 
+                                    catch (e) { setErr(e.message); } 
+                                }} className="w-full bg-blue-600 py-4 rounded-[20px] font-black uppercase text-sm tracking-widest">Login</button>
+									</div>
+								</div> 
+                    ); 
+                } 
+ 
+                return ( 
+                    
+								<div className="p-10 text-center space-y-6">
+									<div className="w-20 h-20 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-4">
+										<div className="text-blue-500 font-bold">OK</div>
+									</div>
+									<h1 className="text-2xl font-black italic">System Online</h1>
+									<p className="text-gray-500 text-sm">{user.email}</p>
+									<button onClick={() => signOut(auth)} className="bg-red-500/10 text-red-500 px-6 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest">Logout</button>
+								</div> 
                 ); 
-            } 
+            }; 
  
-            return React.createElement('div', { className: 'min-h-screen p-6' }, 
-                React.createElement('header', { className: 'pt-4' },  
-                    React.createElement('h1', { className: 'text-4xl font-black italic' }, 'Willkommen'), 
-                    React.createElement('p', { className: 'text-gray-500 text-xs mt-2' }, user.email) 
-                ), 
-                React.createElement('nav', { className: 'fixed bottom-0 left-0 right-0 ios-blur bg-black/60 p-8 flex justify-around border-t border-white/5' }, 
-                    React.createElement('button', { onClick: () => setView('home'), className: 'text-blue-500' }, React.createElement(Icon, { name: 'Home' })), 
-                    React.createElement('button', { onClick: () => signOut(auth), className: 'text-gray-500' }, React.createElement(Icon, { name: 'LogOut' })) 
-                ) 
-            ); 
-        }; 
+            const root = ReactDOM.createRoot(document.getElementById('root')); 
+            root.render(React.createElement(App)); 
  
-        const root = ReactDOM.createRoot(document.getElementById('root')); 
-        root.render(React.createElement(App)); 
-    </script>
+        } catch (e) { 
+            errorLog.innerText = "CRITICAL_ERROR: " + e.message; 
+            console.error(e); 
+        } 
+    
+							</script>
 						</body>
 					</html>
 				</p>
