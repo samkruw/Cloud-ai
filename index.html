@@ -1,4 +1,132 @@
 <!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>CloudStream AI</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { background-color: #050505; color: white; margin: 0; font-family: 'Inter', sans-serif; overflow: hidden; }
+        .loader { border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div id="loading-screen" style="height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 20px;">
+            <div class="loader"></div>
+            <p style="font-size: 10px; color: #444; letter-spacing: 2px; font-weight: bold;">SYSTEM START...</p>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+        
+        // Firebase global verfügbar machen für Babel
+        window.FB = { initializeApp, getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut };
+    </script>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDi9s3g6nyObg5mZYz_n7qgr982h2MrO0o",
+            authDomain: "cloud-ai-a1722.firebaseapp.com",
+            projectId: "cloud-ai-a1722",
+            storageBucket: "cloud-ai-a1722.firebasestorage.app",
+            messagingSenderId: "94852405834",
+            appId: "1:94852405834:web:4bba853d9a20807b84a4b3"
+        };
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [isReady, setIsReady] = useState(false);
+
+            useEffect(() => {
+                // Warten bis Firebase Module geladen sind
+                const timer = setInterval(() => {
+                    if (window.FB) {
+                        clearInterval(timer);
+                        const app = window.FB.initializeApp(firebaseConfig);
+                        const auth = window.FB.getAuth(app);
+                        
+                        window.FB.onAuthStateChanged(auth, (u) => {
+                            setUser(u);
+                            setIsReady(true);
+                            // Loader entfernen
+                            const ls = document.getElementById('loading-screen');
+                            if (ls) ls.style.display = 'none';
+                        });
+                    }
+                }, 100);
+                return () => clearInterval(timer);
+            }, []);
+
+            if (!isReady) return null;
+
+            if (!user) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-8 flex-col gap-10 bg-[#050505]">
+                        <h1 className="text-5xl font-black italic text-blue-600 tracking-tighter">CloudStream</h1>
+                        <div className="w-full max-w-sm bg-[#121212] p-8 rounded-[40px] border border-white/5 shadow-2xl space-y-4">
+                            <input 
+                                type="email" placeholder="E-Mail" 
+                                className="w-full bg-black border border-white/10 p-4 rounded-2xl outline-none text-white text-sm" 
+                                onChange={e => setEmail(e.target.value)} 
+                            />
+                            <input 
+                                type="password" placeholder="Passwort" 
+                                className="w-full bg-black border border-white/10 p-4 rounded-2xl outline-none text-white text-sm" 
+                                onChange={e => setPassword(e.target.value)} 
+                            />
+                            {error && <p className="text-red-500 text-[10px] text-center">{error}</p>}
+                            <button 
+                                onClick={async () => {
+                                    const auth = window.FB.getAuth();
+                                    try { await window.FB.signInWithEmailAndPassword(auth, email, password); }
+                                    catch (e) { setError(e.message); }
+                                }}
+                                className="w-full bg-blue-600 py-4 rounded-[20px] font-black uppercase text-sm tracking-widest active:scale-95 transition-transform"
+                            >
+                                Login
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="p-10 text-center space-y-6">
+                    <h1 className="text-3xl font-black italic">Willkommen zurück!</h1>
+                    <p className="text-gray-500 text-sm">{user.email}</p>
+                    <button 
+                        onClick={() => window.FB.signOut(window.FB.getAuth())}
+                        className="bg-red-500/10 text-red-500 px-6 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest"
+                    >
+                        Abmelden
+                    </button>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+<!DOCTYPE html>
 <html>
 	<head>
 		<title>Codebeautify.org Text to HTML Converter</title>
