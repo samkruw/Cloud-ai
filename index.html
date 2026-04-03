@@ -11,6 +11,370 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Hls.js -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    
+    <style>
+        * { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+        body { background: #000; color: #fff; margin: 0; }
+        .ios-safe-top { padding-top: env(safe-area-inset-top); }
+        .ios-safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+        .glass { background: rgba(40,40,40,0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); }
+        .gradient-text { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        
+        // Firebase Init
+        const firebaseConfig = {
+            apiKey: "AIzaSyDi9s3g6nyObg5mZYz_n7qgr982h2MrO0o",
+            authDomain: "cloud-ai-a1722.firebaseapp.com",
+            projectId: "cloud-ai-a1722",
+            storageBucket: "cloud-ai-a1722.firebasestorage.app",
+            messagingSenderId: "94852405834",
+            appId: "1:94852405834:web:4bba853d9a20807b84a4b3"
+        };
+        
+        let firebaseApp, firebaseAuth, firebaseDb;
+        try {
+            firebaseApp = firebase.initializeApp(firebaseConfig);
+            firebaseAuth = firebase.auth();
+            firebaseDb = firebase.firestore();
+            firebaseDb.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+        } catch(e) { console.error("Firebase init failed:", e); }
+        
+        // Groq Service
+        function createGroqService(apiKey) {
+            const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+            
+            async function callGroq(messages, temp) {
+                const res = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: messages, temperature: temp || 0.7, max_tokens: 4096 })
+                });
+                if (!res.ok) throw new Error('API Error');
+                const data = await res.json();
+                return data.choices[0].message.content;
+            }
+            
+            return {
+                semanticSearch: async function(query, content) {
+                    if (!content || content.length === 0) return [];
+                    const prompt = 'Finde relevante IDs fuer: "' + query + '" in: ' + JSON.stringify(content.map(c => ({ id: c.id, title: c.title, desc: c.description || '' }))) + '. Gib nur JSON-Array zurueck: ["id1","id2"]';
+                    try {
+                        const result = await callGroq([{ role: 'user', content: prompt }], 0.3);
+                        return JSON.parse(result.replace(/```json|```/g, '').trim());
+                    } catch(e) {
+                        return content.filter(i => (i.title + '').toLowerCase().includes(query.toLowerCase())).map(i => i.id);
+                    }
+                },
+                validateMirror: async function(url) {
+                    const prompt = 'Validiere URL: ' + url + '. Gib JSON zurueck: {"valid":true,"trustScore":85,"risks":[],"recommendation":"OK"}';
+                    try {
+                        const result = await callGroq([{ role: 'user', content: prompt }], 0.2);
+                        return JSON.parse(result.replace(/```json|```/g, '').trim());
+                    } catch(e) {
+                        return { valid: url.startsWith('http'), trustScore: 50, risks: [], recommendation: 'Check manually' };
+                    }
+                }
+            };
+        }
+        
+        // Icon Component
+        function Icon(props) {
+            const ref = useRef(null);
+            useEffect(function() {
+                if (ref.current && window.lucide && window.lucide.icons[props.name]) {
+                    ref.current.innerHTML = window.lucide.icons[props.name].toSvg({ width: props.size || 24, height: props.size || 24 });
+                }
+            }, [props.name, props.size]);
+            return React.createElement('span', { ref: ref, className: props.className });
+        }
+        
+        // Auth Screen
+        function AuthScreen(props) {
+            const [isLogin, setIsLogin] = useState(true);
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
+            
+            async function handleSubmit(e) {
+                e.preventDefault();
+                setError('');
+                setLoading(true);
+                try {
+                    if (isLogin) {
+                        await firebaseAuth.signInWithEmailAndPassword(email, password);
+                    } else {
+                        await firebaseAuth.createUserWithEmailAndPassword(email, password);
+                    }
+                } catch(err) {
+                    setError(err.message || 'Fehler');
+                }
+                setLoading(false);
+            }
+            
+            return React.createElement('div', { className: 'min-h-screen flex items-center justify-center p-6 ios-safe-top ios-safe-bottom bg-black' },
+                React.createElement('div', { className: 'w-full max-w-md glass rounded-[32px] p-8 space-y-6' },
+                    React.createElement('div', { className: 'text-center space-y-2' },
+                        React.createElement('h1', { className: 'text-3xl font-bold gradient-text' }, 'CloudStream AI'),
+                        React.createElement('p', { className: 'text-white/60 text-sm' }, 'Dein intelligenter Medien-Aggregator')
+                    ),
+                    React.createElement('form', { onSubmit: handleSubmit, className: 'space-y-4' },
+                        React.createElement('input', { 
+                            type: 'email', 
+                            placeholder: 'E-Mail', 
+                            value: email, 
+                            onChange: function(e) { setEmail(e.target.value); },
+                            className: 'w-full px-4 py-3 rounded-[16px] bg-white/5 border border-white/10 text-white placeholder-white/40 focus:outline-none focus:border-indigo-500'
+                        }),
+                        React.createElement('input', { 
+                            type: 'password', 
+                            placeholder: 'Passwort', 
+                            value: password, 
+                            onChange: function(e) { setPassword(e.target.value); },
+                            className: 'w-full px-4 py-3 rounded-[16px] bg-white/5 border border-white/10 text-white placeholder-white/40 focus:outline-none focus:border-indigo-500'
+                        }),
+                        error ? React.createElement('div', { className: 'p-3 rounded-[12px] bg-red-500/20 text-red-400 text-sm' }, error) : null,
+                        React.createElement('button', { 
+                            type: 'submit', 
+                            disabled: loading,
+                            className: 'w-full py-3 rounded-[20px] bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-medium disabled:opacity-50'
+                        }, loading ? 'Laden...' : (isLogin ? 'Anmelden' : 'Registrieren'))
+                    ),
+                    React.createElement('button', { 
+                        onClick: function() { setIsLogin(!isLogin); },
+                        className: 'w-full text-center text-white/60 text-sm'
+                    }, isLogin ? 'Noch kein Konto? Registrieren' : 'Bereits registriert? Anmelden')
+                )
+            );
+        }
+        
+        // Repository Manager
+        function RepositoryManager(props) {
+            const [url, setUrl] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const groq = props.groq;
+            
+            async function handleImport() {
+                if (!url.trim()) return;
+                setLoading(true);
+                setError('');
+                
+                try {
+                    let validatedUrl = url;
+                    if (url.includes('github.com') && !url.includes('raw.githubusercontent.com')) {
+                        validatedUrl = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+                    }
+                    
+                    if (groq) {
+                        const val = await groq.validateMirror(validatedUrl);
+                        if (!val.valid || val.trustScore < 30) {
+                            setError('Validierung fehlgeschlagen: ' + val.recommendation);
+                            setLoading(false);
+                            return;
+                        }
+                    }
+                    
+                    const res = await fetch(validatedUrl);
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    const data = await res.json();
+                    
+                    if (!Array.isArray(data)) throw new Error('Array erwartet');
+                    props.onImport(data, validatedUrl);
+                    setUrl('');
+                } catch(err) {
+                    setError(err.message);
+                }
+                setLoading(false);
+            }
+            
+            return React.createElement('div', { className: 'glass rounded-[24px] p-6 space-y-4' },
+                React.createElement('div', { className: 'flex items-center gap-3' },
+                    React.createElement(Icon, { name: 'Github', size: 20 }),
+                    React.createElement('h3', { className: 'font-semibold' }, 'Repository Import')
+                ),
+                React.createElement('div', { className: 'flex gap-2' },
+                    React.createElement('input', {
+                        placeholder: 'GitHub JSON URL...',
+                        value: url,
+                        onChange: function(e) { setUrl(e.target.value); },
+                        className: 'flex-1 px-4 py-3 rounded-[16px] bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-indigo-500'
+                    }),
+                    React.createElement('button', {
+                        onClick: handleImport,
+                        disabled: loading || !url,
+                        className: 'px-4 py-3 rounded-[16px] bg-indigo-500 text-white disabled:opacity-50'
+                    }, loading ? '...' : React.createElement(Icon, { name: 'Download', size: 18 }))
+                ),
+                error ? React.createElement('div', { className: 'p-3 rounded-[12px] bg-red-500/20 text-red-400 text-sm' }, error) : null
+            );
+        }
+        
+        // Search Component
+        function SearchBox(props) {
+            const [query, setQuery] = useState('');
+            const [loading, setLoading] = useState(false);
+            
+            async function search() {
+                if (!query.trim() || !props.groq) return;
+                setLoading(true);
+                try {
+                    const results = await props.groq.semanticSearch(query, props.content);
+                    props.onResults(results, query);
+                } catch(e) {
+                    const fallback = props.content.filter(i => (i.title + '').toLowerCase().includes(query.toLowerCase())).map(i => i.id);
+                    props.onResults(fallback, query);
+                }
+                setLoading(false);
+            }
+            
+            return React.createElement('div', { className: 'glass rounded-[24px] p-1 flex items-center gap-2' },
+                React.createElement('div', { className: 'pl-4' }, React.createElement(Icon, { name: 'Search', size: 20, className: 'text-white/40' })),
+                React.createElement('input', {
+                    placeholder: props.groq ? 'KI-Suche...' : 'Suche...',
+                    value: query,
+                    onChange: function(e) { setQuery(e.target.value); },
+                    onKeyPress: function(e) { if (e.key === 'Enter') search(); },
+                    className: 'flex-1 bg-transparent px-2 py-3 text-white placeholder-white/40 focus:outline-none text-sm'
+                }),
+                React.createElement('button', {
+                    onClick: search,
+                    disabled: loading || !query || !props.groq,
+                    className: 'px-4 py-2 rounded-[20px] bg-indigo-500 text-white disabled:opacity-50'
+                }, loading ? '⚡' : React.createElement(Icon, { name: 'Sparkles', size: 18 }))
+            );
+        }
+        
+        // Media Player
+        function MediaPlayer(props) {
+            const videoRef = useRef(null);
+            const [isHLS, setIsHLS] = useState(false);
+            
+            useEffect(function() {
+                if (!props.src || !videoRef.current) return;
+                const video = videoRef.current;
+                
+                if (props.src.includes('.m3u8') && window.Hls.isSupported()) {
+                    setIsHLS(true);
+                    const hls = new window.Hls();
+                    hls.loadSource(props.src);
+                    hls.attachMedia(video);
+                    hls.on(window.Hls.Events.MANIFEST_PARSED, function() { video.play(); });
+                    return function() { hls.destroy(); };
+                } else {
+                    setIsHLS(false);
+                    video.src = props.src;
+                    video.play();
+                }
+            }, [props.src]);
+            
+            return React.createElement('div', { className: 'fixed inset-0 z-50 bg-black flex flex-col' },
+                React.createElement('div', { className: 'ios-safe-top flex items-center justify-between p-4 glass' },
+                    React.createElement('div', { className: 'flex items-center gap-3' },
+                        React.createElement('button', { onClick: props.onClose, className: 'p-2' }, React.createElement(Icon, { name: 'ChevronLeft', size: 24 })),
+                        React.createElement('h2', { className: 'font-semibold truncate' }, props.title)
+                    ),
+                    isHLS ? React.createElement('span', { className: 'px-2 py-1 rounded-full bg-indigo-500/20 text-indigo-400 text-xs' }, 'LIVE') : null
+                ),
+                React.createElement('div', { className: 'flex-1 flex items-center justify-center' },
+                    React.createElement('video', { ref: videoRef, controls: true, playsInline: true, className: 'w-full h-full object-contain' })
+                ),
+                React.createElement('div', { className: 'ios-safe-bottom p-4 glass' },
+                    React.createElement('p', { className: 'text-xs text-white/40 font-mono truncate' }, props.src)
+                )
+            );
+        }
+        
+        // Content Card
+        function ContentCard(props) {
+            const typeColors = { movie: 'bg-blue-500', series: 'bg-pink-500', live: 'bg-red-500' };
+            const badgeColor = typeColors[props.item.type] || 'bg-gray-500';
+            
+            return React.createElement('div', { 
+                className: 'glass rounded-[24px] overflow-hidden cursor-pointer active:scale-95 transition-transform',
+                onClick: function() { props.onPlay(props.item); }
+            },
+                React.createElement('div', { className: 'aspect-video bg-gray-800 relative' },
+                    props.item.thumbnail ? 
+                        React.createElement('img', { src: props.item.thumbnail, className: 'w-full h-full object-cover', loading: 'lazy' }) :
+                        React.createElement('div', { className: 'w-full h-full flex items-center justify-center' }, React.createElement(Icon, { name: 'Film', size: 32, className: 'text-white/20' })),
+                    React.createElement('div', { className: 'absolute inset-0 bg-gradient-to-t from-black/80 to-transparent' }),
+                    React.createElement('div', { className: 'absolute top-3 right-3' },
+                        React.createElement('span', { className: 'px-2 py-1 rounded-full text-xs font-medium text-white ' + badgeColor }, props.item.type || 'video')
+                    ),
+                    React.createElement('div', { className: 'absolute bottom-0 left-0 right-0 p-4' },
+                        React.createElement('h3', { className: 'font-semibold line-clamp-2' }, props.item.title),
+                        props.item.year ? React.createElement('p', { className: 'text-sm text-white/60' }, props.item.year) : null
+                    )
+                ),
+                React.createElement('div', { className: 'p-4 flex items-center justify-between' },
+                    React.createElement('p', { className: 'text-sm text-white/60 line-clamp-1 flex-1' }, props.item.description || 'Keine Beschreibung'),
+                    React.createElement('button', {
+                        onClick: function(e) { e.stopPropagation(); props.onFavorite(props.item); },
+                        className: 'p-2 rounded-full ' + (props.isFavorite ? 'bg-red-500/20 text-red-400' : 'text-white/40')
+                    }, React.createElement(Icon, { name: props.isFavorite ? 'Heart' : 'HeartOff', size: 20 }))
+                )
+            );
+        }
+        
+        // Main App
+        function App() {
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [content, setContent] = useState([]);
+            const [favorites, setFavorites] = useState([]);
+            const [history, setHistory] = useState([]);
+            const [activeTab, setActiveTab] = useState('home');
+            const [currentMedia, setCurrentMedia] = useState(null);
+            const [searchResults, setSearchResults] = useState(null);
+            const [searchQuery, setSearchQuery] = useState('');
+            const [groqKey, setGroqKey] = useState('');
+            const [showKeyModal, setShowKeyModal] = useState(false);
+            
+            const groqService = useMemo(function() {
+                return groqKey ? createGroqService(groqKey) : null;
+            }, [groqKey]);
+            
+            // Auth
+            useEffect(function() {
+									   <!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
+    <title>CloudStream AI</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
     <!-- React & ReactDOM (UMD) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
