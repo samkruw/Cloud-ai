@@ -24,6 +24,470 @@
     <!-- Hls.js -->
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     
+    <!-- Firebase v9+ (UMD/compat) -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        * {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        body {
+            background: #000;
+            color: #fff;
+            overflow-x: hidden;
+        }
+        
+        .ios-safe-top {
+            padding-top: env(safe-area-inset-top);
+        }
+        
+        .ios-safe-bottom {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        
+        .glass-panel {
+            background: rgba(28, 28, 30, 0.72);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .glass-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        
+        .gradient-text {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 20px rgba(102, 126, 234, 0.4); }
+            50% { box-shadow: 0 0 40px rgba(102, 126, 234, 0.6); }
+        }
+        
+        .ai-thinking {
+            animation: pulse-glow 2s ease-in-out infinite;
+        }
+        
+        .repo-card:hover {
+            transform: translateY(-2px);
+            transition: all 0.3s ease;
+        }
+        
+        .stream-badge {
+            background: linear-gradient(90deg, #ff6b6b, #feca57);
+        }
+        
+        .movie-badge {
+            background: linear-gradient(90deg, #48dbfb, #0abde3);
+        }
+        
+        .series-badge {
+            background: linear-gradient(90deg, #ff9ff3, #f368e0);
+        }
+        
+        .loading-shimmer {
+            background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+        }
+        
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+    </style>
+</head>
+<body class="bg-black text-white antialiased">
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback, createContext, useContext, useMemo } = React;
+        
+        // Firebase Config
+        const firebaseConfig = {
+            apiKey: "AIzaSyDi9s3g6nyObg5mZYz_n7qgr982h2MrO0o",
+            authDomain: "cloud-ai-a1722.firebaseapp.com",
+            projectId: "cloud-ai-a1722",
+            storageBucket: "cloud-ai-a1722.firebasestorage.app",
+            messagingSenderId: "94852405834",
+            appId: "1:94852405834:web:4bba853d9a20807b84a4b3"
+        };
+        
+        // Initialize Firebase
+        let firebaseApp, firebaseAuth, firebaseDb;
+        
+        try {
+            if (!firebase.apps.length) {
+                firebaseApp = firebase.initializeApp(firebaseConfig);
+            } else {
+                firebaseApp = firebase.app();
+            }
+            firebaseAuth = firebase.auth();
+            firebaseDb = firebase.firestore();
+            
+            // Enable offline persistence
+            firebaseDb.enablePersistence({ synchronizeTabs: true }).catch(console.error);
+        } catch (e) {
+            console.error("Firebase Init Error:", e);
+        }
+        
+        // Contexts
+        const AuthContext = createContext(null);
+        const FirestoreContext = createContext(null);
+        const GroqContext = createContext(null);
+        
+        // Custom Hooks
+        const useAuth = () => useContext(AuthContext);
+        const useFirestore = () => useContext(FirestoreContext);
+        const useGroq = () => useContext(GroqContext);
+        
+        // Groq AI Service
+        const createGroqService = (apiKey) => {
+            const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+            
+            const callGroq = async (messages, temperature = 0.7) => {
+                try {
+                    const response = await fetch(GROQ_API_URL, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${apiKey}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            model: 'llama-3.3-70b-versatile',
+                            messages,
+                            temperature,
+                            max_tokens: 4096
+                        })
+                    });
+                    
+                    if (!response.ok) {
+                        const error = await response.text();
+                        throw new Error(`Groq API Error: ${error}`);
+                    }
+                    
+                    const data = await response.json();
+                    return data.choices[0].message.content;
+                } catch (error) {
+                    console.error('Groq Error:', error);
+                    throw error;
+                }
+            };
+            
+            const semanticSearch = async (query, content) => {
+                if (!content || content.length === 0) return [];
+                
+                const prompt = `Du bist ein semantischer Suchalgorithmus für Streaming-Inhalte. 
+                Analysiere die folgenden Inhalte und finde die relevantesten Ergebnisse für: "${query}"
+                
+                Inhalte: ${JSON.stringify(content.map(c => ({ 
+                    id: c.id, 
+                    title: c.title, 
+                    description: c.description || '', 
+                    type: c.type, 
+                    genre: c.genre || '', 
+                    year: c.year || '' 
+                })))}
+                
+                Gib NUR ein JSON-Array zurück mit den IDs der relevanten Inhalte, sortiert nach Relevanz (höchste zuerst).
+                Format: ["id1", "id2", "id3"]
+                Keine Erklärungen, nur das JSON-Array.`;
+                
+                try {
+                    const result = await callGroq([{ role: 'user', content: prompt }], 0.3);
+                    const cleaned = result.replace(/```json|```/g, '').trim();
+                    return JSON.parse(cleaned);
+                } catch (e) {
+                    console.error('Semantic search parse error:', e);
+                    // Fallback: Simple text search
+                    return content
+                        .filter(item => 
+                            item.title?.toLowerCase().includes(query.toLowerCase()) ||
+                            item.description?.toLowerCase().includes(query.toLowerCase())
+                        )
+                        .map(item => item.id);
+                }
+            };
+            
+            const validateMirror = async (url, contentType) => {
+                const prompt = `Validiere diesen Streaming-Link: ${url}
+                Inhaltstyp: ${contentType}
+                
+                Analysiere:
+                1. Ist die URL-Struktur valide für ${contentType}?
+                2. Welche potenziellen Risiken gibt es (Malware, Phishing)?
+                3. Ist die Domain bekannt für ${contentType}-Content?
+                
+                Gib ein JSON-Objekt zurück:
+                {
+                    "valid": boolean,
+                    "trustScore": number (0-100),
+                    "risks": string[],
+                    "recommendation": string
+                }
+                
+                Nur das JSON-Objekt, keine Erklärungen.`;
+                
+                try {
+                    const result = await callGroq([{ role: 'user', content: prompt }], 0.2);
+                    const cleaned = result.replace(/```json|```/g, '').trim();
+                    return JSON.parse(cleaned);
+                } catch (e) {
+                    // Fallback validation
+                    const isValid = url.startsWith('http') && 
+                                   (url.includes('githubusercontent.com') || url.includes('raw.githubusercontent.com'));
+                    return { 
+                        valid: isValid, 
+                        trustScore: isValid ? 70 : 30, 
+                        risks: isValid ? [] : ['Unknown domain'], 
+                        recommendation: isValid ? 'Proceed with caution' : 'Verify source manually' 
+                    };
+                }
+            };
+            
+            const getRecommendations = async (userHistory, availableContent) => {
+                if (!userHistory?.length || !availableContent?.length) return [];
+                
+                const prompt = `Basierend auf diesem Nutzerverlauf: ${JSON.stringify(userHistory.slice(0, 10))}
+                Empfiehl passende Inhalte aus dieser Liste: ${JSON.stringify(availableContent.slice(0, 20))}
+                
+                Berücksichtige:
+                - Genre-Präferenzen
+                - Watch-Time Patterns
+                - Ähnliche Metadaten (Regisseur, Schauspieler, Studio)
+                
+                Gib ein JSON-Array zurück mit den top 5 empfohlenen IDs und Begründungen:
+                [{"id": "...", "reason": "..."}]
+                
+                Nur das JSON-Array, keine Erklärungen.`;
+                
+                try {
+                    const result = await callGroq([{ role: 'user', content: prompt }], 0.8);
+                    const cleaned = result.replace(/```json|```/g, '').trim();
+                    return JSON.parse(cleaned);
+                } catch (e) {
+                    return [];
+                }
+            };
+            
+            return { callGroq, semanticSearch, validateMirror, getRecommendations };
+        };
+        
+        // Icon Component
+        const Icon = ({ name, size = 24, className = "" }) => {
+            const iconRef = useRef(null);
+            
+            useEffect(() => {
+                if (iconRef.current && window.lucide && window.lucide.icons[name]) {
+                    iconRef.current.innerHTML = '';
+                    const svg = window.lucide.icons[name].toSvg({ 
+                        width: size, 
+                        height: size,
+                        strokeWidth: 2
+                    });
+                    iconRef.current.innerHTML = svg;
+                }
+            }, [name, size]);
+            
+            return <span ref={iconRef} className={className} />;
+        };
+        
+        // UI Components
+        const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, type = 'button' }) => {
+            const baseStyles = "px-6 py-3 rounded-[20px] font-medium transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2";
+            const variants = {
+                primary: "bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:opacity-90 shadow-lg shadow-indigo-500/25",
+                secondary: "glass-card text-white hover:bg-white/10",
+                danger: "bg-red-500/20 text-red-400 border border-red-500/50 hover:bg-red-500/30",
+                ghost: "text-white/60 hover:text-white hover:bg-white/5"
+            };
+            
+            return (
+                <button 
+                    type={type}
+                    onClick={onClick} 
+                    disabled={disabled}
+                    className={`${baseStyles} ${variants[variant]} ${className}`}
+                >
+                    {children}
+                </button>
+            );
+        };
+        
+        const Input = ({ type = "text", placeholder, value, onChange, className = "", icon = null }) => (
+            <div className="relative">
+                {icon && (
+                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40">
+                        <Icon name={icon} size={18} />
+                    </div>
+                )}
+                <input
+                    type={type}
+                    placeholder={placeholder}
+                    value={value}
+                    onChange={onChange}
+                    className={`w-full px-4 ${icon ? 'pl-12' : ''} py-3 rounded-[16px] bg-white/5 border border-white/10 text-white placeholder-white/40 focus:outline-none focus:border-indigo-500/50 focus:bg-white/10 transition-all ${className}`}
+                />
+            </div>
+        );
+        
+        // Auth Screen
+        const AuthScreen = () => {
+            const [isLogin, setIsLogin] = useState(true);
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
+            const { signIn, signUp } = useAuth();
+            
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError('');
+                setLoading(true);
+                
+                try {
+                    if (isLogin) {
+                        await signIn(email, password);
+                    } else {
+                        await signUp(email, password);
+                    }
+                } catch (err) {
+                    setError(err.message || 'Authentifizierung fehlgeschlagen');
+                } finally {
+                    setLoading(false);
+                }
+            };
+            
+            return (
+                <div className="min-h-screen flex items-center justify-center p-6 ios-safe-top ios-safe-bottom bg-gradient-to-br from-gray-900 via-black to-gray-900">
+                    <div className="w-full max-w-md">
+                        <div className="glass-panel rounded-[40px] p-8 space-y-6 shadow-2xl">
+                            <div className="text-center space-y-2">
+                                <div className="w-20 h-20 mx-auto rounded-[24px] bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center mb-4">
+                                    <Icon name="Cloud" size={40} className="text-white" />
+                                </div>
+                                <h1 className="text-3xl font-bold gradient-text">CloudStream AI</h1>
+                                <p className="text-white/60">Dein intelligenter Medien-Aggregator</p>
+                            </div>
+                            
+                            <form onSubmit={handleSubmit} className="space-y-4">
+                                <Input
+                                    type="email"
+                                    placeholder="E-Mail"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    icon="Mail"
+                                />
+                                <Input
+                                    type="password"
+                                    placeholder="Passwort"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    icon="Lock"
+                                />
+                                
+                                {error && (
+                                    <div className="p-3 rounded-[12px] bg-red-500/20 border border-red-500/30 text-red-400 text-sm flex items-center gap-2">
+                                        <Icon name="AlertCircle" size={16} />
+                                        {error}
+                                    </div>
+                                )}
+                                
+                                <Button 
+                                    type="submit" 
+                                    disabled={loading || !email || !password}
+                                    className="w-full"
+                                >
+                                    {loading ? (
+                                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    ) : (
+                                        <Icon name={isLogin ? "LogIn" : "UserPlus"} size={18} />
+                                    )}
+                                    {loading ? 'Bitte warten...' : (isLogin ? 'Anmelden' : 'Registrieren')}
+                                </Button>
+                            </form>
+                            
+                            <button
+                                onClick={() => setIsLogin(!isLogin)}
+                                className="w-full text-center text-white/60 hover:text-white text-sm transition-colors"
+                            >
+                                {isLogin ? 'Noch kein Konto? Registrieren' : 'Bereits registriert? Anmelden'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+        
+        // Repository Manager
+        const RepositoryManager = ({ onImport }) => {
+            const [url, setUrl] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [validation, setValidation] = useState(null);
+            const groq = useGroq();
+            
+            const handleImport = async () => {
+                if (!url.trim()) return;
+                
+                setLoading(true);
+                setError('');
+                setValidation(null);
+                
+                try {
+                    // Validate URL format first
+                    let validatedUrl = url;
+                    if (url.includes('github.com') && !url.includes('raw.githubusercontent.com')) {
+                        // Convert to raw URL
+                        validatedUrl = url
+                            .replace('github.com', 'raw.githubusercontent.com')
+                   <!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
+    <title>CloudStream AI</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM (UMD) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel Standalone for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Hls.js -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    
     <!-- Firebase v11 -->
     <script type="module">
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js';
