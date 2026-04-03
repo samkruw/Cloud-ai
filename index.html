@@ -7,6 +7,276 @@
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { background-color: #050505; color: white; margin: 0; font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .ios-blur { backdrop-filter: blur(25px) saturate(200%); -webkit-backdrop-filter: blur(25px) saturate(200%); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .loader { border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .active-tab { color: #3b82f6; transform: scale(1.1); }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div id="loading-screen" style="height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 20px;">
+            <div class="loader"></div>
+            <p style="font-size: 10px; color: #444; letter-spacing: 2px; font-weight: bold; font-family: sans-serif;">BOOTING AI CORE...</p>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        
+        window.FB = { initializeApp, getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp };
+    </script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDi9s3g6nyObg5mZYz_n7qgr982h2MrO0o",
+            authDomain: "cloud-ai-a1722.firebaseapp.com",
+            projectId: "cloud-ai-a1722",
+            storageBucket: "cloud-ai-a1722.firebasestorage.app",
+            messagingSenderId: "94852405834",
+            appId: "1:94852405834:web:4bba853d9a20807b84a4b3"
+        };
+
+        const Icon = ({ name, size = 24, className = "" }) => {
+            const LucideIcon = window.lucide?.icons[name];
+            return LucideIcon ? <LucideIcon size={size} className={className} /> : null;
+        };
+
+        const App = () => {
+            const [isReady, setIsReady] = useState(false);
+            const [user, setUser] = useState(null);
+            const [view, setView] = useState('home'); // home, search, library, settings, details, player
+            const [selectedMedia, setSelectedMedia] = useState(null);
+            
+            // App Data
+            const [favorites, setFavorites] = useState([]);
+            const [history, setHistory] = useState([]);
+            const [groqKey, setGroqKey] = useState(localStorage.getItem('groq_api_key') || '');
+            const [aiInsights, setAiInsights] = useState(null);
+            const [isAiLoading, setIsAiLoading] = useState(false);
+
+            // Auth & Firebase Setup
+            useEffect(() => {
+                const checkFB = setInterval(() => {
+                    if (window.FB) {
+                        clearInterval(checkFB);
+                        const app = window.FB.initializeApp(firebaseConfig);
+                        const auth = window.FB.getAuth(app);
+                        const db = window.FB.getFirestore(app);
+                        window.dbInst = db; // Global für Handlers
+
+                        window.FB.onAuthStateChanged(auth, (u) => {
+                            setUser(u);
+                            setIsReady(true);
+                            if (document.getElementById('loading-screen')) {
+                                document.getElementById('loading-screen').style.display = 'none';
+                            }
+                        });
+                    }
+                }, 100);
+            }, []);
+
+            // Realtime Sync
+            useEffect(() => {
+                if (!user || !window.dbInst) return;
+                const path = ['artifacts', 'cloudstream-web-ai', 'users', user.uid];
+                
+                const unsubFav = window.FB.onSnapshot(window.FB.collection(window.dbInst, ...path, 'favorites'), s => 
+                    setFavorites(s.docs.map(d => ({id: d.id, ...d.data()})))
+                );
+                const unsubHist = window.FB.onSnapshot(window.FB.collection(window.dbInst, ...path, 'history'), s => 
+                    setHistory(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)))
+                );
+                return () => { unsubFav(); unsubHist(); };
+            }, [user]);
+
+            // Groq AI Search logic
+            const askAi = async (query) => {
+                if (!groqKey || query.length < 3) return;
+                setIsAiLoading(true);
+                try {
+                    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                        method: "POST",
+                        headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            model: "llama-3.3-70b-versatile",
+                            messages: [{ role: "system", content: "Du bist CloudStream AI. Gib extrem kurze Streaming-Empfehlungen auf Deutsch." },
+                                       { role: "user", content: `Suche: ${query}` }]
+                        })
+                    });
+                    const data = await res.json();
+                    setAiInsights(data.choices?.[0]?.message?.content);
+                } catch (e) { console.error(e); } finally { setIsAiLoading(false); }
+            };
+
+            if (!isReady) return null;
+
+            // --- LOGIN VIEW ---
+            if (!user) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-8 flex-col bg-[#050505]">
+                        <h1 className="text-5xl font-black italic text-blue-600 mb-10 tracking-tighter">CloudStream</h1>
+                        <div className="w-full max-w-sm bg-[#121212] p-8 rounded-[40px] border border-white/5 shadow-2xl space-y-4">
+                            <input id="login-email" type="email" placeholder="E-Mail" className="w-full bg-black border border-white/10 p-4 rounded-2xl outline-none text-sm text-white" />
+                            <input id="login-pass" type="password" placeholder="Passwort" className="w-full bg-black border border-white/10 p-4 rounded-2xl outline-none text-sm text-white" />
+                            <button onClick={async () => {
+                                const e = document.getElementById('login-email').value;
+                                const p = document.getElementById('login-pass').value;
+                                try { await window.FB.signInWithEmailAndPassword(window.FB.getAuth(), e, p); }
+                                catch (err) { alert(err.message); }
+                            }} className="w-full bg-blue-600 py-4 rounded-[20px] font-black uppercase text-sm tracking-widest shadow-lg shadow-blue-600/20 active:scale-95 transition-all">Anmelden</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            // --- MAIN VIEWS ---
+            const renderView = () => {
+                switch(view) {
+                    case 'home': return (
+                        <div className="space-y-10 animate-in fade-in">
+                            <header className="flex justify-between items-center pt-6">
+                                <h1 className="text-4xl font-black italic tracking-tighter leading-none">Entdecken</h1>
+                                <div className="text-blue-500 animate-pulse"><Icon name="Zap" /></div>
+                            </header>
+                            {history.length > 0 && (
+                                <section>
+                                    <h3 className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-4">Zuletzt gesehen</h3>
+                                    <div className="flex gap-4 overflow-x-auto no-scrollbar -mx-6 px-6">
+                                        {history.slice(0, 5).map((m, i) => (
+                                            <div key={i} onClick={() => { setSelectedMedia(m); setView('details'); }} className="w-28 shrink-0">
+                                                <div className="aspect-[2/3] rounded-2xl overflow-hidden border border-white/5 mb-2 shadow-lg"><img src={m.poster} className="w-full h-full object-cover" /></div>
+                                                <p className="text-[9px] font-bold truncate opacity-50 uppercase">{m.title}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </section>
+                            )}
+                            <section>
+                                <h3 className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-4 px-1">Top Trends</h3>
+                                <div className="grid grid-cols-2 gap-5">
+                                    {[1, 2, 3, 4].map(i => (
+                                        <div key={i} onClick={() => { setSelectedMedia({title: 'AI Movie '+i, poster: `https://images.unsplash.com/photo-${1626814026160+i}-2237a95fc5a0?w=400`, year: '2024'}); setView('details'); }} className="aspect-[2/3] bg-[#121212] rounded-[32px] overflow-hidden border border-white/5 relative active:scale-95 transition-transform shadow-xl">
+                                            <img src={`https://images.unsplash.com/photo-${1626814026160+i}-2237a95fc5a0?w=400`} className="w-full h-full object-cover" />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black p-5 flex flex-col justify-end text-[11px] font-black italic">TRENDING {i}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </section>
+                        </div>
+                    );
+                    case 'search': return (
+                        <div className="space-y-6 pt-4 animate-in fade-in">
+                            <div className="relative">
+                                <Icon name="Search" size={20} className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-600" />
+                                <input className="w-full bg-[#121212] border border-white/5 rounded-[24px] py-5 pl-14 pr-12 outline-none text-lg" placeholder="Was suchst du?" onChange={e => askAi(e.target.value)} />
+                                {isAiLoading && <div className="absolute right-5 top-1/2 -translate-y-1/2 animate-spin text-blue-500"><Icon name="Loader2" size={20}/></div>}
+                            </div>
+                            {aiInsights && <div className="bg-blue-600/10 border border-blue-500/20 p-5 rounded-[28px] text-[13px] italic text-blue-100/70 shadow-inner">{aiInsights}</div>}
+                        </div>
+                    );
+                    case 'library': return (
+                        <div className="space-y-8 pt-4 animate-in fade-in">
+                            <h1 className="text-4xl font-black italic">Mediathek</h1>
+                            <div className="grid grid-cols-2 gap-5">
+                                {favorites.map((f, i) => (
+                                    <div key={i} onClick={() => { setSelectedMedia(f); setView('details'); }} className="aspect-[2/3] rounded-[32px] overflow-hidden border border-white/5 relative shadow-xl">
+                                        <img src={f.poster} className="w-full h-full object-cover" />
+                                        <div className="absolute inset-0 bg-gradient-to-t from-black p-4 flex flex-col justify-end font-black text-xs italic">{f.title}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                    case 'settings': return (
+                        <div className="space-y-8 pt-4">
+                            <h1 className="text-4xl font-black italic">Setup</h1>
+                            <div className="bg-[#121212] p-8 rounded-[40px] border border-white/5 space-y-8">
+                                <div>
+                                    <h3 className="text-[10px] font-black uppercase text-gray-600 mb-3 tracking-widest">Groq AI Key</h3>
+                                    <input type="password" value={groqKey} onChange={e => { setGroqKey(e.target.value); localStorage.setItem('groq_api_key', e.target.value); }} className="w-full bg-black border border-white/10 rounded-2xl p-4 text-xs font-mono" placeholder="gsk_..." />
+                                </div>
+                                <div className="pt-6 border-t border-white/5">
+                                    <p className="text-[10px] text-gray-600 mb-4 text-center truncate">User: {user.email}</p>
+                                    <button onClick={() => window.FB.signOut(window.FB.getAuth())} className="w-full bg-red-500/10 text-red-500 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest">Abmelden</button>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                    case 'details': return (
+                        <div className="animate-in slide-in-from-bottom-10 space-y-10 pt-4">
+                            <div className="flex justify-between items-center px-2">
+                                <button onClick={() => setView('home')} className="p-4 bg-[#121212] rounded-3xl border border-white/5"><Icon name="ChevronLeft" size={28}/></button>
+                                <button onClick={async () => {
+                                    const existing = favorites.find(f => f.title === selectedMedia.title);
+                                    const path = ['artifacts', 'cloudstream-web-ai', 'users', user.uid, 'favorites'];
+                                    if (existing) await window.FB.deleteDoc(window.FB.doc(window.dbInst, ...path, existing.id));
+                                    else await window.FB.addDoc(window.FB.collection(window.dbInst, ...path), { ...selectedMedia, timestamp: window.FB.serverTimestamp() });
+                                }} className={`p-4 rounded-3xl border ${favorites.some(f => f.title === selectedMedia.title) ? 'bg-red-500/10 border-red-500 text-red-500' : 'bg-[#121212] border-white/5 text-gray-500'}`}>
+                                    <Icon name="Heart" size={28} fill={favorites.some(f => f.title === selectedMedia.title) ? "currentColor" : "none"} />
+                                </button>
+                            </div>
+                            <div className="aspect-[2/3] w-full max-w-[280px] mx-auto rounded-[48px] overflow-hidden shadow-2xl ring-1 ring-white/10"><img src={selectedMedia.poster} className="w-full h-full object-cover" /></div>
+                            <h2 className="text-4xl font-black text-center italic px-4">{selectedMedia.title}</h2>
+                            <button onClick={async () => {
+                                const path = ['artifacts', 'cloudstream-web-ai', 'users', user.uid, 'history'];
+                                await window.FB.addDoc(window.FB.collection(window.dbInst, ...path), { ...selectedMedia, timestamp: window.FB.serverTimestamp() });
+                                setView('player');
+                            }} className="w-full py-6 bg-blue-600 rounded-[32px] font-black text-xl shadow-xl active:scale-95 transition-all">JETZT STARTEN</button>
+                        </div>
+                    );
+                    case 'player': return (
+                        <div className="fixed inset-0 bg-black z-[200] flex flex-col items-center justify-center p-10 text-center animate-in fade-in">
+                            <button onClick={() => setView('details')} className="absolute top-16 left-8 opacity-30"><Icon name="ChevronLeft" size={40}/></button>
+                            <div className="loader mb-8 shadow-[0_0_30px_rgba(59,130,246,0.3)]"></div>
+                            <h2 className="text-2xl font-black italic mb-2">KI Link Check...</h2>
+                            <p className="text-[10px] text-gray-600 font-bold uppercase tracking-widest">Validierung läuft</p>
+                        </div>
+                    );
+                }
+            };
+
+            return (
+                <div className="min-h-screen px-6 max-w-xl mx-auto pb-32">
+                    {renderView()}
+                    {view !== 'player' && (
+                        <nav className="fixed bottom-0 left-0 right-0 ios-blur bg-black/60 border-t border-white/5 pb-10 pt-4 px-10 flex justify-around items-center z-50">
+                            <button onClick={() => setView('home')} className={`p-4 rounded-2xl ${view === 'home' ? 'text-blue-500 scale-110' : 'text-gray-700 opacity-50'}`}><Icon name="Home" /></button>
+                            <button onClick={() => setView('search')} className={`p-4 rounded-2xl ${view === 'search' ? 'text-blue-500 scale-110' : 'text-gray-700 opacity-50'}`}><Icon name="Search" /></button>
+                            <button onClick={() => setView('library')} className={`p-4 rounded-2xl ${view === 'library' ? 'text-blue-500 scale-110' : 'text-gray-700 opacity-50'}`}><Icon name="Library" /></button>
+                            <button onClick={() => setView('settings')} className={`p-4 rounded-2xl ${view === 'settings' ? 'text-blue-500 scale-110' : 'text-gray-700 opacity-50'}`}><Icon name="Settings" /></button>
+                        </nav>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>CloudStream AI</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
     
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
