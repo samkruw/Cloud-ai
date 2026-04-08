@@ -135,6 +135,17 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 .empty{text-align:center;padding:56px 0;color:var(--muted);}
 .empty div{font-size:44px;margin-bottom:10px;}
 .empty h3{font-size:15px;color:var(--text);margin-bottom:5px;}
+.feed-tab.active{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important;}
+.lang-badge{display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;letter-spacing:.5px;}
+.lang-de{background:rgba(0,100,255,.15);color:#60a5fa;border:1px solid rgba(0,100,255,.25);}
+.lang-en{background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.25);}
+.lang-ja{background:rgba(230,57,70,.12);color:var(--accent);border:1px solid rgba(230,57,70,.25);}
+.lang-fr{background:rgba(245,158,11,.12);color:var(--yellow);border:1px solid rgba(245,158,11,.25);}
+.lang-other{background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.25);}
+.rcard-lang{position:absolute;top:5px;right:5px;display:flex;gap:3px;flex-wrap:wrap;}
+.rcard .rthumb .play-overlay{position:absolute;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;font-size:32px;}
+.rcard:hover .play-overlay{opacity:1;}
+.rcard .rthumb{position:relative;}
 
 @media(max-width:768px){
   .sidebar{width:54px;}
@@ -236,7 +247,26 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
     <div class="sec-title">AKTIVE PROVIDER</div>
     <div class="pgrid" id="home-pgrid"><span class="spinner"></span></div>
     <div class="sec-title">SCHNELLSUCHE</div>
-    <div id="quick-tags" style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:24px"></div>
+    <div id="quick-tags" style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:28px"></div>
+
+    <!-- CONTENT FEED -->
+    <div id="feed-wrap" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="sec-title" style="margin:0">JETZT VERFÜGBAR</div>
+        <div id="feed-tabs" style="display:flex;gap:6px">
+          <button class="btn btn-primary btn-sm feed-tab active" onclick="switchFeed('trending')">🔥 Trending</button>
+          <button class="btn btn-ghost btn-sm feed-tab" onclick="switchFeed('movies')">🎬 Filme</button>
+          <button class="btn btn-ghost btn-sm feed-tab" onclick="switchFeed('series')">📺 Serien</button>
+          <button class="btn btn-ghost btn-sm feed-tab" onclick="switchFeed('anime')">🎌 Anime</button>
+          <button class="btn btn-ghost btn-sm feed-tab" onclick="switchFeed('doku')">📹 Dokus</button>
+        </div>
+      </div>
+      <div id="content-feed" class="rgrid" style="margin-bottom:28px"></div>
+      <div id="feed-status" style="text-align:center;font-size:12px;color:var(--muted);margin-bottom:16px"></div>
+    </div>
+    <div id="feed-empty" style="text-align:center;padding:40px;color:var(--muted);font-size:13px">
+      Aktiviere einen Provider um Inhalte zu sehen
+    </div>
   </div>
 
   <!-- SEARCH -->
@@ -594,13 +624,54 @@ const ProviderLoader = (() => {
 
   async function activate(pid){
     const p = _all.find(x=>x.id===pid);
-    if(!p) return;
+    if(!p){ console.warn('[PL] Provider nicht gefunden:', pid); return; }
     let code = p.jsCode;
-    if(!code && p.repoUrl) {
-      try { code = await fetchCode(p.repoUrl); await fsUpdate('providers',pid,{jsCode:code}); }
-      catch(e){ code = demoCode(); }
+    if(!code){
+      console.warn('[PL] Kein jsCode fuer', pid, '- verwende Demo-Code');
+      code = demoCode(p.name, p.sites);
+      // Nachtraeglich Code generieren via Groq falls Key vorhanden
+      const groqKey = localStorage.getItem('sv_groq_key');
+      if(groqKey){
+        generateProviderCodeBg(pid, p, groqKey).catch(()=>{});
+      }
     }
-    if(code) makeWorker(pid, code);
+    makeWorker(pid, code);
+  }
+
+  async function generateProviderCodeBg(pid, p, groqKey){
+    try{
+      const promptParts = [
+        'Schreibe einen JavaScript Streaming-Provider.',
+        'Provider: ' + (p.name||pid),
+        'Websites: ' + (p.sites||[]).join(', '),
+        'Implementiere (kein import, kein export):',
+        'async function search(query) { return [{id,title,year,type,poster}]; }',
+        'async function getDetails(id) { return {id,title,description,year,rating}; }',
+        'async function getStreams(id) { return [{url,quality,type,source,language:"de"|"en",subtitles:[]}]; }',
+        'Netzwerk via proxyFetch(url). Demo HLS falls noetig: https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
+        'Nur reinen JavaScript Code, kein Markdown.'
+      ];
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+groqKey},
+        body: JSON.stringify({
+          model:'llama-3.3-70b-versatile',
+          messages:[{role:'user',content:promptParts.join('\n')}],
+          max_tokens:1500, temperature:0.2
+        })
+      });
+      if(!resp.ok) return;
+      const d = await resp.json();
+      let code = d.choices?.[0]?.message?.content||'';
+      code = code.replace(/^```[\w]*/m,'').replace(/```$/m,'').trim();
+      if(code.includes('async function search')){
+        await fsSet('providers', pid, {jsCode: code, lastUpdate: Date.now()});
+        // Worker neu starten mit echtem Code
+        if(_workers[pid]){ _workers[pid].stop(); delete _workers[pid]; }
+        if(_active.has(pid)) makeWorker(pid, code);
+        console.log('[PL] Code nachgeladen fuer:', pid);
+      }
+    } catch(e){ console.warn('[PL] BG Code-Gen:', e.message); }
   }
 
   async function fetchCode(repoUrl){
@@ -671,23 +742,26 @@ const ProviderLoader = (() => {
       jsCode: demoCode()
     }];
   }
-  function demoCode(){
-    return `
-async function search(q){
-  return [
-    {id:'d1',title:q+' – Demo Film',year:2024,type:'movie',poster:'',rating:'8.1'},
-    {id:'d2',title:q+' – Demo Serie',year:2023,type:'series',poster:'',rating:'8.5'}
-  ];
-}
-async function getDetails(id){
-  return {id,title:'Demo Titel',description:'Demo-Eintrag für StreamVault.',year:2024,rating:'8.5'};
-}
-async function getStreams(id){
-  return [
-    {url:'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',quality:'1080p',type:'hls',source:'Demo HLS'},
-    {url:'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',quality:'480p',type:'mp4',source:'Demo MP4'}
-  ];
-}`.trim();
+  function demoCode(name, sites){
+    var provName = name || 'Demo';
+    var siteList = (sites||[]).join(', ') || 'demo.stream';
+    return [
+      'async function search(q){',
+      '  return [',
+      '    {id:"d1",title:q+" - Film ('+provName+')",year:2024,type:"movie",poster:"",rating:"8.0"},',
+      '    {id:"d2",title:q+" - Serie ('+provName+')",year:2023,type:"series",poster:"",rating:"8.2"}',
+      '  ];',
+      '}',
+      'async function getDetails(id){',
+      '  return {id:id,title:"Demo: "+id,description:"Provider: '+provName+' | Sites: '+siteList+'",year:2024,rating:"8.0"};',
+      '}',
+      'async function getStreams(id){',
+      '  return [',
+      '    {url:"https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",quality:"1080p",type:"hls",source:"'+provName+' Demo HLS",language:"de",subtitles:[]},',
+      '    {url:"https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",quality:"480p",type:"mp4",source:"Demo MP4",language:"en",subtitles:[]}',
+      '  ];',
+      '}'
+    ].join('\n');
   }
 
   return {
@@ -738,18 +812,43 @@ const Player = (() => {
     } catch(e){ showToast('❌ '+e.message,'error'); }
   }
 
+  window.langBadge = function langBadge(lang){
+    if(!lang) return '';
+    var l = lang.toLowerCase();
+    var cls = l.includes('de')||l.includes('ger')||l.includes('deutsch') ? 'lang-de'
+            : l.includes('en')||l.includes('eng') ? 'lang-en'
+            : l.includes('ja')||l.includes('jpn')||l.includes('jap') ? 'lang-ja'
+            : l.includes('fr')||l.includes('fra') ? 'lang-fr'
+            : 'lang-other';
+    var flag = l.includes('de')||l.includes('ger')||l.includes('deutsch') ? '🇩🇪'
+             : l.includes('en')||l.includes('eng') ? '🇬🇧'
+             : l.includes('ja')||l.includes('jpn') ? '🇯🇵'
+             : l.includes('fr')||l.includes('fra') ? '🇫🇷'
+             : l.includes('es')||l.includes('spa') ? '🇪🇸'
+             : l.includes('tr')||l.includes('tur') ? '🇹🇷'
+             : l.includes('ar')||l.includes('ara') ? '🇸🇦'
+             : '🌐';
+    return '<span class="lang-badge '+cls+'">'+flag+' '+lang.toUpperCase().slice(0,3)+'</span>';
+  }
+
   function renderStreams(streams){
     _streams=streams; _idx=0;
     const el = document.getElementById('stream-list');
     if(!el) return;
     if(!streams||!streams.length){ el.innerHTML='<div class="empty"><div>📭</div><h3>Keine Streams</h3></div>'; return; }
-    el.innerHTML = streams.map((s,i)=>`
-      <div class="sitem" onclick="Player.select(${i})">
-        <span class="squal">${esc(s.quality||'Auto')}</span>
-        <span class="ssrc">${esc(s.source||s.url||'Stream '+(i+1))}</span>
-        <span style="font-size:10px;padding:2px 7px;border-radius:4px;background:rgba(37,99,235,.1);color:#60a5fa;font-family:'JetBrains Mono',monospace">${(s.type||'HLS').toUpperCase()}</span>
-        <button class="btn btn-primary btn-sm">▶</button>
-      </div>`).join('');
+    el.innerHTML = streams.map(function(s,i){
+      var qualHtml = '<span class="squal">'+esc(s.quality||'Auto')+'</span>';
+      var langHtml = s.language ? langBadge(s.language) : '';
+      var subHtml  = s.subtitles && s.subtitles.length
+        ? '<span style="font-size:10px;color:var(--muted)">Ⓢ '+s.subtitles.map(function(x){return x.lang||x;}).join(' ')+'</span>'
+        : '';
+      var typeHtml = '<span style="font-size:10px;padding:2px 7px;border-radius:4px;background:rgba(37,99,235,.1);color:#60a5fa;font-family:monospace">'+(s.type||'HLS').toUpperCase()+'</span>';
+      var srcHtml  = '<span class="ssrc">'+esc(s.source||'Stream '+(i+1))+'</span>';
+      return '<div class="sitem" onclick="Player.select('+i+')">'
+        + qualHtml + langHtml + srcHtml + subHtml + typeHtml
+        + '<button class="btn btn-primary btn-sm">▶</button>'
+        + '</div>';
+    }).join('');
   }
 
   function select(i){
@@ -828,16 +927,126 @@ function saveSettings(){
 document.getElementById('settingsModal').addEventListener('click',function(e){ if(e.target===this) closeModal(); });
 
 // ─── Home Stats ──────────────────────────────────
+// ─── Feed State ──────────────────────────────────
+var _feedCategory = 'trending';
+var _feedResults  = [];
+var _feedLoading  = false;
+
 async function loadHomeStats(){
   try{
     const [repos,providers] = await Promise.all([fsGet('repos').catch(()=>[]), fsGet('providers').catch(()=>[])]);
-    const sites = providers.reduce((n,p)=>n+(p.sites?.length||0),0);
+    const sites = providers.reduce((n,p)=>n+(p.sites&&p.sites.length||0),0);
     document.getElementById('s-repos').textContent     = repos.length||'–';
     document.getElementById('s-providers').textContent = providers.length||'–';
     document.getElementById('s-active').textContent    = ProviderLoader.getActive().size;
     document.getElementById('s-sites').textContent     = sites||'–';
     renderHomeProviders();
+    // Content Feed laden wenn Provider aktiv
+    if(ProviderLoader.getActive().size > 0){
+      loadContentFeed(_feedCategory);
+    }
   } catch(e){ console.warn('[Home]',e.message); }
+}
+
+// ─── Content Feed ─────────────────────────────────
+var FEED_QUERIES = {
+  trending: ['trending','popular','neu','aktuell','top'],
+  movies:   ['film','movie','kino','thriller','action'],
+  series:   ['serie','staffel','season','episode'],
+  anime:    ['anime','manga','one piece','naruto','attack on titan'],
+  doku:     ['dokumentation','documentary','doku','history','nature']
+};
+
+function switchFeed(cat){
+  _feedCategory = cat;
+  document.querySelectorAll('.feed-tab').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('onclick').includes("'"+cat+"'"));
+    b.classList.toggle('btn-primary', b.getAttribute('onclick').includes("'"+cat+"'"));
+    b.classList.toggle('btn-ghost', !b.getAttribute('onclick').includes("'"+cat+"'"));
+  });
+  loadContentFeed(cat);
+}
+
+async function loadContentFeed(cat){
+  if(_feedLoading) return;
+  const active = ProviderLoader.getActive().size;
+  const feedWrap  = document.getElementById('feed-wrap');
+  const feedEmpty = document.getElementById('feed-empty');
+  const feedEl    = document.getElementById('content-feed');
+  const feedSt    = document.getElementById('feed-status');
+
+  if(active === 0){
+    feedWrap.style.display  = 'none';
+    feedEmpty.style.display = 'block';
+    return;
+  }
+  feedWrap.style.display  = 'block';
+  feedEmpty.style.display = 'none';
+  feedEl.innerHTML = '<span class="spinner"></span>';
+  feedSt.textContent = '';
+  _feedLoading = true;
+
+  try{
+    var queries = FEED_QUERIES[cat] || FEED_QUERIES.trending;
+    var query   = queries[Math.floor(Math.random() * queries.length)];
+    var results = await ProviderLoader.searchAll(query);
+
+    // Deduplizieren nach Titel
+    var seen  = {};
+    var dedup = [];
+    results.forEach(function(r){
+      var key = (r.title||r.name||'').toLowerCase().trim();
+      if(!seen[key]){ seen[key]=true; dedup.push(r); }
+    });
+
+    if(!dedup.length){
+      feedEl.innerHTML = '<div class="empty" style="grid-column:1/-1"><div>😶</div><h3>Keine Inhalte</h3><p>Probiere einen anderen Tab</p></div>';
+      feedSt.textContent = 'Suche: "'+query+'"';
+      return;
+    }
+
+    var frag = document.createDocumentFragment();
+    dedup.slice(0,24).forEach(function(r){
+      var card = document.createElement('div');
+      card.className = 'rcard';
+      card.style.cursor = 'pointer';
+      card.onclick = (function(item){ return function(){ openMedia(JSON.stringify(item)); }; })(r);
+
+      var thumbDiv = document.createElement('div');
+      thumbDiv.className = 'rthumb';
+      if(r.poster){
+        var img = document.createElement('img');
+        img.src = r.poster; img.loading = 'lazy';
+        img.onerror = function(){ this.style.display='none'; };
+        thumbDiv.appendChild(img);
+      } else {
+        thumbDiv.textContent = r.type==='series' ? '📺' : r.type==='anime' ? '🎌' : '🎬';
+      }
+      var overlay = document.createElement('div');
+      overlay.className = 'play-overlay';
+      overlay.textContent = '▶';
+      thumbDiv.appendChild(overlay);
+
+      var info = document.createElement('div');
+      info.className = 'rinfo';
+      var langBadgeHtml = r.language ? langBadge(r.language) : '';
+      info.innerHTML = '<div class="rtitle">'+esc(r.title||r.name||'–')+'</div>'
+        + '<div class="rmeta">'+esc(String(r.year||''))+' '+(r.type?'&middot; '+r.type:'')+' '+langBadgeHtml+'</div>'
+        + '<div class="rsrc">'+esc(r._providerName||'')+'</div>';
+
+      card.appendChild(thumbDiv);
+      card.appendChild(info);
+      frag.appendChild(card);
+    });
+    feedEl.innerHTML = '';
+    feedEl.appendChild(frag);
+
+    feedSt.textContent = dedup.length+' Ergebnisse · Suche: "'+query+'"';
+  } catch(e){
+    feedEl.innerHTML = '<div class="empty" style="grid-column:1/-1"><div>❌</div><h3>Fehler</h3><p>'+esc(e.message)+'</p></div>';
+  } finally{
+    _feedLoading = false;
+  }
 }
 
 function renderHomeProviders(){
@@ -890,6 +1099,13 @@ async function doToggle(id,btn){
     btn.classList.toggle('on',on);
     showToast(on?'✅ Provider aktiv':'⏸ Deaktiviert', on?'success':'');
     document.getElementById('s-active').textContent = ProviderLoader.getActive().size;
+    // Feed aktualisieren
+    if(on){
+      showToast('⏳ Lade Inhalte...', '');
+      setTimeout(function(){ loadContentFeed(_feedCategory); }, 800);
+    } else {
+      loadContentFeed(_feedCategory);
+    }
   } catch(e){ showToast('❌ '+e.message,'error'); }
   finally{ btn.disabled=false; }
 }
@@ -922,19 +1138,50 @@ async function triggerSearch(){
     const res = await ProviderLoader.searchAll(q);
     status.textContent=`${res.length} Ergebnis${res.length!==1?'se':''} für "${q}"`;
     if(!res.length){ grid.innerHTML=`<div class="empty" style="grid-column:1/-1"><div>😶</div><h3>Nichts gefunden</h3></div>`; return; }
-    grid.innerHTML = res.map(r=>`
-      <div class="rcard" onclick='openMedia(${JSON.stringify(JSON.stringify(r))})'>
-        <div class="rthumb">${r.poster?`<img src="${esc(r.poster)}" loading="lazy" onerror="this.style.display='none'">`:(r.type==='series'?'📺':'🎬')}</div>
-        <div class="rinfo">
-          <div class="rtitle">${esc(r.title||r.name||'–')}</div>
-          <div class="rmeta">${esc(r.year||'')}${r.type?' · '+r.type:''}</div>
-          <div class="rsrc">${esc(r._providerName||'')}</div>
-        </div>
-      </div>`).join('');
+    var frag2 = document.createDocumentFragment();
+    res.forEach(function(r){
+      var card = document.createElement('div');
+      card.className = 'rcard';
+      card.onclick = (function(item){ return function(){ openMedia(JSON.stringify(item)); }; })(r);
+
+      var thumb = document.createElement('div');
+      thumb.className = 'rthumb';
+      if(r.poster){
+        var img = document.createElement('img');
+        img.src = r.poster; img.loading = 'lazy';
+        img.onerror = function(){ this.style.display='none'; };
+        thumb.appendChild(img);
+      } else {
+        thumb.textContent = r.type==='series' ? '📺' : r.type==='anime' ? '🎌' : '🎬';
+      }
+      // Sprach-Badge oben rechts im Thumbnail
+      if(r.language){
+        var langDiv = document.createElement('div');
+        langDiv.className = 'rcard-lang';
+        langDiv.innerHTML = langBadge(r.language);
+        thumb.appendChild(langDiv);
+      }
+      var overlay = document.createElement('div');
+      overlay.className = 'play-overlay';
+      overlay.textContent = '▶';
+      thumb.appendChild(overlay);
+
+      var info = document.createElement('div');
+      info.className = 'rinfo';
+      info.innerHTML = '<div class="rtitle">'+esc(r.title||r.name||'–')+'</div>'
+        + '<div class="rmeta">'+esc(String(r.year||''))+(r.type?' &middot; '+r.type:'')+'</div>'
+        + '<div class="rsrc">'+esc(r._providerName||'')+'</div>';
+
+      card.appendChild(thumb);
+      card.appendChild(info);
+      frag2.appendChild(card);
+    });
+    grid.innerHTML = '';
+    grid.appendChild(frag2);
   } catch(e){ status.textContent='❌ '+e.message; grid.innerHTML=''; }
 }
 
-function openMedia(j){ Player.open(JSON.parse(j)); }
+function openMedia(j){ Player.open(typeof j==='string' ? JSON.parse(j) : j); }
 
 // ─── Discovery: GitHub Scan ──────────────────────
 // ─── Groq-basierte Repo Discovery ───────────────
@@ -959,24 +1206,37 @@ async function groqChat(groqKey, prompt, maxTokens) {
 async function generateProviderCode(groqKey, provider, st) {
   st.innerHTML = '⚙ <span style="color:var(--purple)">Generiere JS-Code für ' + esc(provider.name) + '...</span>';
 
+  var sites = (provider.sites||[]).join(', ') || provider.name;
   var prompt = [
-    'Schreibe einen JavaScript Streaming-Provider fuer StreamVault.',
+    'Schreibe einen vollstaendigen JavaScript Streaming-Provider fuer eine Streaming-App.',
     'Provider: ' + provider.name,
-    'Websites: ' + (provider.sites||[]).join(', '),
-    'Info: ' + (provider.description||''),
+    'Ziel-Websites: ' + sites,
+    'Info: ' + (provider.description||'Streaming-Anbieter'),
     '',
-    'Implementiere 3 Funktionen (kein import, kein module.exports):',
-    'async function search(query) { return [{id,title,year,type,poster}]; }',
-    'async function getDetails(id) { return {id,title,description,year,rating}; }',
-    'async function getStreams(id) { return [{url,quality,type,source}]; }',
+    'Implementiere genau diese 3 Funktionen. Kein class, kein import, kein export.',
+    'HTTP-Requests: await proxyFetch(url) gibt eine Response zurueck (wie fetch).',
+    'HTML parsen mit String/Regex (kein DOM-Zugriff im Worker).',
     '',
-    'Netzwerk via: proxyFetch(url) -> Response',
-    'Falls keine echten Streams: Demo HLS: https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
-    'Antworte NUR mit JavaScript, kein Markdown.'
+    'async function search(query) {',
+    '  // Suche nach Filmen/Serien auf ' + sites,
+    '  // Gibt Array zurueck: [{id:"string", title:"Titel", year:2024, type:"movie", poster:"url_oder_leer"}]',
+    '}',
+    'async function getDetails(id) {',
+    '  // Gibt zurueck: {id, title, description, year, rating:"8.5"}',
+    '}',
+    'async function getStreams(id) {',
+    '  // Findet Stream-Links.',
+    '  // Gibt zurueck: [{url:"https://...", quality:"1080p", type:"hls"|"mp4", source:"Name",',
+    '  //   language:"de"|"en"|"ja"|"fr" (Audiosprache), subtitles:[{lang:"de",url:"..."}]}]',
+    '  // language: "de" fuer Deutsch, "en" fuer Englisch, "ja" fuer Japanisch usw.',
+    '  // WICHTIG: Wenn keine echten Streams gefunden, Demo-Stream zurueckgeben:',
+    '  // [{url:"https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",quality:"Demo",type:"hls",source:"Demo",language:"de"}]',
+    '}',
+    '',
+    'NUR JavaScript Code ausgeben. Kein Markdown, keine Backticks, keine Erklaerung.'
   ].join('\n');
 
-  const code = await groqChat(groqKey, prompt, 2000);
-  // Markdown Backticks entfernen falls vorhanden
+  var code = await groqChat(groqKey, prompt, 2000);
   // Markdown Backticks entfernen
   code = code.replace(/^```[\w]*/m,'').replace(/```$/m,'').trim();
   return code;
@@ -1002,12 +1262,19 @@ async function triggerScan(){
       'Nur reale, aktive Projekte. Kein Markdown.'
     ].join('\n');
     var listPrompt = [
-      'Liste 10 bekannte Open-Source Streaming-Provider fuer Movies und Anime.',
-      'Bekannte Beispiele: cloudstream, aniyomi-extensions.',
+      'Liste 15 Open-Source Streaming-Provider und Movie-Scraper Projekte auf GitHub.',
+      'Fokus auf: Deutsche und deutschsprachige Anbieter (z.B. fuer sto.to, streamkiste.tv, filme.ws, kinox.to, bs.to, s.to, movie4k, streamcloud), SOWIE internationale Anime und Movie Provider.',
+      'Bekannte Beispiele: cloudstream-extensions, aniyomi-extensions, sora, movie-web, consumet.ts, stremio-addons.',
       '',
-      'Antworte NUR mit JSON Array (kein Markdown):',
-      '[{"name":"owner/repo","url":"https://github.com/owner/repo","description":"kurz","language":"JS|Kotlin","stars":1234,"sites":["site.com"],"qualityScore":4,"riskScore":2}]',
-      'Nur reale aktive Projekte.'
+      'Fuer jeden Provider gib an welche deutschen oder internationalen Streaming-Seiten er unterstuetzt.',
+      '',
+      'Antworte NUR mit JSON Array (kein Markdown, kein Text davor oder danach):',
+      '[',
+      '  {"name":"owner/repo","url":"https://github.com/owner/repo","description":"kurze Beschreibung auf Deutsch",',
+      '   "language":"JS|Kotlin|Python|TypeScript","stars":1234,',
+      '   "sites":["sto.to","bs.to","kinox.to"],"qualityScore":4,"riskScore":2}',
+      ']',
+      'Nur reale existierende GitHub-Repos. Mindestens 5 mit deutschen Streaming-Sites.'
     ].join('\n');
 
     const listText = await groqChat(groqKey, listPrompt, 2000);
