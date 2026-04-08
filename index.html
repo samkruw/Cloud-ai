@@ -330,6 +330,12 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
   <div class="modal">
     <h2>⚙ EINSTELLUNGEN</h2>
     <div class="fg"><label>Groq API Key</label><input type="password" id="i-groq" placeholder="gsk_xxxx"></div>
+    <div class="fg">
+      <label>CORS Proxy Override (optional)</label>
+      <input type="text" id="i-proxy" placeholder="https://api.allorigins.win/raw?url=">
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Leer lassen für automatische Proxy-Erkennung</div>
+    </div>
+    <div id="proxy-status" style="font-size:11px;color:var(--muted);padding:6px 0"></div>
     <div class="mact">
       <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
       <button class="btn btn-primary" onclick="saveSettings()">💾 Speichern</button>
@@ -368,12 +374,25 @@ self.onmessage = async function(e) {
     self.postMessage({id:id, error:err.message});
   }
 };
-function proxyFetch(url, opts) {
-  var target = self.PROXY ? self.PROXY + encodeURIComponent(url) : url;
-  return fetch(target, {credentials:'omit', mode:'cors'}).then(function(r) {
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r;
-  });
+var PROXY_CHAIN = [
+  'https://api.allorigins.win/raw?url=',
+  'https://corsproxy.io/?url=',
+  'https://thingproxy.freeboard.io/fetch/',
+  ''
+];
+
+async function proxyFetch(url, opts) {
+  var proxies = self.PROXY ? [self.PROXY] : PROXY_CHAIN;
+  var lastErr = null;
+  for(var i=0; i<proxies.length; i++){
+    try{
+      var target = proxies[i] ? proxies[i] + encodeURIComponent(url) : url;
+      var r = await fetch(target, {credentials:'omit', mode:'cors'});
+      if(r.ok) return r;
+      lastErr = new Error('HTTP ' + r.status + ' via ' + (proxies[i]||'direkt'));
+    } catch(e){ lastErr = e; }
+  }
+  throw lastErr || new Error('Alle Proxies fehlgeschlagen');
 }
 </script>
 
@@ -385,6 +404,28 @@ const FB_PROJECT  = 'cloud-ai-a1722';
 const FB_API_KEY  = 'AIzaSyDi9s3g6nyObg5mZYz_n7qgr982h2MrO0o';
 const FS_BASE     = 'https://firestore.googleapis.com/v1/projects/' + FB_PROJECT + '/databases/(default)/documents';
 const AUTH_BASE   = 'https://identitytoolkit.googleapis.com/v1';
+
+// ─── CORS Proxy mit Fallback-Chain ───────────────
+// Mehrere Proxies – erster der antwortet wird genutzt
+const PROXY_LIST = [
+  'https://api.allorigins.win/raw?url=',
+  'https://corsproxy.io/?url=',
+  'https://thingproxy.freeboard.io/fetch/'
+];
+var CORS_PROXY = PROXY_LIST[0]; // Default
+
+// Proxy testen und besten wählen
+(async function detectProxy(){
+  const testUrl = 'https://httpbin.org/get';
+  for(var i=0; i<PROXY_LIST.length; i++){
+    try{
+      var r = await fetch(PROXY_LIST[i]+encodeURIComponent(testUrl), {signal: AbortSignal.timeout(4000)});
+      if(r.ok){ CORS_PROXY = PROXY_LIST[i]; console.log('[Proxy] Nutze:', CORS_PROXY); return; }
+    } catch(_){}
+  }
+  console.warn('[Proxy] Kein Proxy erreichbar – direkter Zugriff');
+  CORS_PROXY = '';
+})();
 
 // ─── Auth State ──────────────────────────────────
 window._authUser  = null;
@@ -679,14 +720,16 @@ const ProviderLoader = (() => {
     if(!m) throw new Error('Kein GitHub URL');
     const [,owner,repo] = m;
     const files = ['provider.js','main.js','index.js','src/provider.js'];
-    const proxy = CORS_PROXY;
+    const proxies = [CORS_PROXY,'https://api.allorigins.win/raw?url=','https://corsproxy.io/?url=',''];
     for(const f of files){
-      const raw = `https://raw.githubusercontent.com/${owner}/${repo}/main/${f}`;
-      try{
-        const url = proxy ? proxy+'?url='+encodeURIComponent(raw) : raw;
-        const r = await fetch(url);
-        if(r.ok) return r.text();
-      } catch(_){}
+      const raw = 'https://raw.githubusercontent.com/'+owner+'/'+repo+'/main/'+f;
+      for(const proxy of proxies){
+        try{
+          const url = proxy ? proxy+encodeURIComponent(raw) : raw;
+          const r = await fetch(url);
+          if(r.ok) return r.text();
+        } catch(_){}
+      }
     }
     throw new Error('Kein Code gefunden');
   }
@@ -909,21 +952,29 @@ function showPage(id){
 
 // ─── Settings ────────────────────────────────────
 function openSettings(){
-  document.getElementById('i-groq').value  = localStorage.getItem('sv_groq_key')||'';
+  document.getElementById('i-groq').value = localStorage.getItem('sv_groq_key')||'';
+  var proxyEl = document.getElementById('i-proxy');
+  if(proxyEl) proxyEl.value = localStorage.getItem('sv_proxy_override')||'';
+  var statusEl = document.getElementById('proxy-status');
+  if(statusEl) statusEl.textContent = 'Aktiver Proxy: '+(CORS_PROXY||'keiner');
   document.getElementById('settingsModal').classList.add('open');
 }
 function closeModal(){ document.getElementById('settingsModal').classList.remove('open'); }
 function saveSettings(){
-  const map={
-    'i-groq':'sv_groq_key',
-  };
-  Object.entries(map).forEach(([inputId,storeKey])=>{
-    const v=document.getElementById(inputId).value.trim();
-    if(v) localStorage.setItem(storeKey,v);
-  });
+  var groq = document.getElementById('i-groq').value.trim();
+  if(groq) localStorage.setItem('sv_groq_key', groq);
+  var proxyEl = document.getElementById('i-proxy');
+  if(proxyEl){
+    var pv = proxyEl.value.trim();
+    if(pv){ localStorage.setItem('sv_proxy_override', pv); CORS_PROXY = pv; }
+    else { localStorage.removeItem('sv_proxy_override'); }
+  }
   closeModal();
-  showToast('✅ Gespeichert – Seite neu laden für Firebase','success');
+  showToast('Gespeichert', 'success');
 }
+// Proxy Override beim Start
+(function(){ var ov=localStorage.getItem('sv_proxy_override'); if(ov) CORS_PROXY=ov; })();
+
 document.getElementById('settingsModal').addEventListener('click',function(e){ if(e.target===this) closeModal(); });
 
 // ─── Home Stats ──────────────────────────────────
@@ -1242,117 +1293,89 @@ async function generateProviderCode(groqKey, provider, st) {
   return code;
 }
 
+// ─── Feste Provider-Liste (bekannte deutsche + internationale Anbieter) ───
+var KNOWN_PROVIDERS = [
+  // Deutsche Provider
+  {id:'sto_to',         name:'SerienStream (sto.to)',   sites:['sto.to','s.to','serienstream.to'],        language:'de', desc:'Groesste deutsche Serien-Streaming-Plattform',        quality:5, risk:2},
+  {id:'bs_to',          name:'Burning Series (bs.to)',  sites:['bs.to','burningseries.ac'],                language:'de', desc:'Deutsche Serien-Streaming-Plattform',                  quality:5, risk:2},
+  {id:'serienjunkies',  name:'Serienjunkies',           sites:['serienjunkies.org'],                       language:'de', desc:'Deutsche Serien-Downloads und Streams',                quality:4, risk:2},
+  {id:'kinox',          name:'KinoX (kinox.to)',        sites:['kinox.to','kinox.sx'],                     language:'de', desc:'Groesste deutsche Film-Streaming-Plattform',           quality:4, risk:3},
+  {id:'streamkiste',    name:'Streamkiste',             sites:['streamkiste.tv'],                          language:'de', desc:'Deutsche Filme und Serien kostenlos',                  quality:4, risk:2},
+  {id:'filmpalast',     name:'Filmpalast',              sites:['filmpalast.to'],                           language:'de', desc:'Deutsche Filme und Serien in HD',                      quality:4, risk:2},
+  {id:'movie4k',        name:'Movie4K',                 sites:['movie4k.mx','movie4k.to'],                 language:'de', desc:'Filme in 4K und HD auf Deutsch',                       quality:4, risk:3},
+  {id:'serienonline',   name:'Serien Online',           sites:['serien.sx'],                               language:'de', desc:'Deutsche Serien online schauen',                       quality:4, risk:2},
+  {id:'anixart',        name:'Anime Loads',             sites:['animeloads.eu','aniworld.to'],             language:'de', desc:'Anime auf Deutsch und mit deutschen Untertiteln',      quality:5, risk:1},
+  {id:'aniworld',       name:'Aniworld',                sites:['aniworld.to'],                             language:'de', desc:'Anime Streaming auf Deutsch',                          quality:5, risk:1},
+  // Internationale Provider
+  {id:'vidsrc',         name:'VidSrc',                  sites:['vidsrc.to','vidsrc.me'],                   language:'en', desc:'Movie und Serien Streams via TMDB-ID',                 quality:5, risk:1},
+  {id:'superstream',    name:'SuperStream',             sites:['superstream.nl'],                          language:'en', desc:'Qualitativ hochwertige Movie und Serien Streams',       quality:5, risk:1},
+  {id:'embedsu',        name:'Embed.su',                sites:['embed.su'],                                language:'en', desc:'Embed-basierter Stream-Provider',                      quality:4, risk:1},
+  {id:'autoembed',      name:'AutoEmbed',               sites:['autoembed.co'],                            language:'en', desc:'Automatische Stream-Einbettung',                       quality:4, risk:2},
+  {id:'2embed',         name:'2Embed',                  sites:['2embed.cc'],                               language:'en', desc:'Film und Serien Embed-Player',                         quality:4, risk:2},
+  {id:'multiembed',     name:'MultiEmbed',              sites:['multiembed.mov'],                          language:'en', desc:'Multi-Sprachen Stream Provider',                       quality:4, risk:2},
+  {id:'rive',           name:'Rive (Rivestream)',       sites:['rivestream.to'],                           language:'en', desc:'Sauberer Stream-Provider mit vielen Sprachen',         quality:5, risk:1},
+  {id:'consumet',       name:'Consumet API',            sites:['api.consumet.org'],                        language:'en', desc:'Open-Source API fuer Anime und Movies (anilist etc.)', quality:5, risk:1},
+  {id:'animepahe',      name:'AnimePahe',               sites:['animepahe.ru','animepahe.com'],            language:'en', desc:'Anime Streaming in hoher Qualitaet',                   quality:5, risk:1},
+  {id:'zoro',           name:'Zoro / HiAnime',          sites:['hianime.to','zoro.to'],                    language:'en', desc:'Anime mit Untertiteln und Dub',                        quality:5, risk:1}
+];
+
 async function triggerScan(){
   const groqKey = localStorage.getItem('sv_groq_key');
   if(!groqKey){ showToast('⚙ Groq API Key fehlt','error'); openSettings(); return; }
   const st = document.getElementById('scan-status');
-  st.innerHTML = '🤖 <span style="color:var(--purple)">Schritt 1/3: Groq sucht Provider...</span>';
-  showToast('🔍 Groq Discovery gestartet...');
+  st.innerHTML = '⚙ <span style="color:var(--purple)">'+KNOWN_PROVIDERS.length+' Provider gefunden – generiere JS-Code mit Groq...</span>';
+  showToast('🔍 Provider Setup gestartet...');
 
-  try{
-    // ── Schritt 1: Provider Liste von Groq holen ──
-    var listPrompt = [
-      'Liste 10 bekannte Open-Source Streaming-Provider fuer Movies und Anime.',
-      'Bekannte Beispiele: cloudstream, aniyomi-extensions.',
-      '',
-      'Antworte NUR mit JSON Array:',
-      '[{"name":"owner/repo","url":"https://github.com/owner/repo","description":"kurz",',
-      '"language":"JS|Kotlin|Python","stars":1234,"sites":["site.com"],',
-      '"qualityScore":4,"riskScore":2}]',
-      'Nur reale, aktive Projekte. Kein Markdown.'
-    ].join('\n');
-    var listPrompt = [
-      'Liste 15 Open-Source Streaming-Provider und Movie-Scraper Projekte auf GitHub.',
-      'Fokus auf: Deutsche und deutschsprachige Anbieter (z.B. fuer sto.to, streamkiste.tv, filme.ws, kinox.to, bs.to, s.to, movie4k, streamcloud), SOWIE internationale Anime und Movie Provider.',
-      'Bekannte Beispiele: cloudstream-extensions, aniyomi-extensions, sora, movie-web, consumet.ts, stremio-addons.',
-      '',
-      'Fuer jeden Provider gib an welche deutschen oder internationalen Streaming-Seiten er unterstuetzt.',
-      '',
-      'Antworte NUR mit JSON Array (kein Markdown, kein Text davor oder danach):',
-      '[',
-      '  {"name":"owner/repo","url":"https://github.com/owner/repo","description":"kurze Beschreibung auf Deutsch",',
-      '   "language":"JS|Kotlin|Python|TypeScript","stars":1234,',
-      '   "sites":["sto.to","bs.to","kinox.to"],"qualityScore":4,"riskScore":2}',
-      ']',
-      'Nur reale existierende GitHub-Repos. Mindestens 5 mit deutschen Streaming-Sites.'
-    ].join('\n');
+  var saved=0, approved=0;
 
-    const listText = await groqChat(groqKey, listPrompt, 2000);
-    const listMatch = listText.match(/\[[\s\S]*\]/);
-    if(!listMatch) throw new Error('Kein JSON von Groq');
-    const providers = JSON.parse(listMatch[0]);
-    if(!providers.length) throw new Error('Leere Provider-Liste');
+  for(var i=0; i<KNOWN_PROVIDERS.length; i++){
+    var p = KNOWN_PROVIDERS[i];
+    st.innerHTML = '⚙ ('+(i+1)+'/'+KNOWN_PROVIDERS.length+') '
+      + '<span style="color:var(--purple)">Generiere Code für '+esc(p.name)+'...</span>';
 
-    st.innerHTML = '✅ ' + providers.length + ' Provider gefunden – generiere JS-Code...';
-    await new Promise(r => setTimeout(r, 500));
+    var jsCode = '';
+    try{
+      jsCode = await generateProviderCode(groqKey, {
+        name: p.name, sites: p.sites, description: p.desc, language: p.language
+      }, st);
+    } catch(e){
+      console.warn('[Scan] Code-Gen:', p.name, e.message);
+      jsCode = demoCode(p.name, p.sites);
+    }
 
-    let saved=0, approved=0;
-
-    for(let i=0; i<providers.length; i++){
-      const p = providers[i];
-      const repoId = (p.name||'provider_'+i).replace('/','_').replace(/[^a-zA-Z0-9_-]/g,'');
-
-      st.innerHTML = '⚙ <span style="color:var(--purple)">('+(i+1)+'/'+providers.length+') Generiere Code für '+esc(p.name||repoId)+'...</span>';
-
-      // ── Schritt 2: JS Code für jeden Provider generieren ──
-      let jsCode = '';
-      try {
-        jsCode = await generateProviderCode(groqKey, p, st);
-      } catch(e) {
-        console.warn('[Scan] Code-Gen Fehler:', e.message);
-        // Fallback: Demo-Code
-        jsCode = [
-          'async function search(q){return [{id:"d1",title:q+" (Demo)",year:2024,type:"movie",poster:""}];}',
-          'async function getDetails(id){return {id:id,title:"Demo Titel",description:"Demo Provider",year:2024,rating:"7.0"};}',
-          'async function getStreams(id){return [{url:"https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",quality:"1080p",type:"hls",source:"Demo HLS"}];}'
-        ].join('\n');
-      }
-
-      // ── Schritt 3: In Firestore speichern ──
-      const repoData = {
-        repoId, name: p.name||repoId, url: p.url||'',
-        description: p.description||'', stars: p.stars||0,
-        language: p.language||'JS', lastScan: Date.now(),
+    try{
+      var repoData = {
+        repoId: p.id, name: p.name, url: '',
+        description: p.desc, stars: 0,
+        language: p.language === 'de' ? 'JavaScript' : 'JavaScript',
+        lastScan: Date.now(),
         aiResult: {
-          isProvider: true, language: p.language||'JS',
-          sites: p.sites||[], qualityScore: p.qualityScore||3,
-          riskScore: p.riskScore||2,
-          searchLogic: 'Groq-Discovery', streamLogic: 'Groq-Discovery'
+          isProvider: true, language: p.language,
+          sites: p.sites, qualityScore: p.quality,
+          riskScore: p.risk, searchLogic: 'Hardcoded', streamLogic: 'Groq-Generated'
         },
         aiAnalysedAt: Date.now()
       };
+      await fsSet('repos', p.id, repoData);
+      await fsSet('providers', p.id, {
+        repoUrl: '', name: p.name,
+        sites: p.sites, language: p.language,
+        qualityScore: p.quality, riskScore: p.risk,
+        status: 'approved', autoApproved: true,
+        jsCode: jsCode, lastUpdate: Date.now()
+      });
+      saved++; approved++;
+    } catch(e){ console.warn('[Scan] Firestore:', e.message); }
 
-      try {
-        await fsSet('repos', repoId, repoData);
-        // Provider mit JS Code speichern
-        if((p.riskScore||2)<=3 && (p.qualityScore||3)>=3){
-          await fsSet('providers', repoId, {
-            repoUrl: p.url||'', name: p.name||repoId,
-            sites: p.sites||[], language: p.language||'JS',
-            qualityScore: p.qualityScore||3, riskScore: p.riskScore||2,
-            status: 'approved', autoApproved: true,
-            jsCode: jsCode,
-            lastUpdate: Date.now()
-          });
-          approved++;
-        }
-        saved++;
-      } catch(e){ console.warn('[Scan] Firestore:', e.message); }
-
-      // Rate Limit: 2s zwischen Groq Calls
-      if(i < providers.length-1) await new Promise(r => setTimeout(r, 2000));
-    }
-
-    st.innerHTML = '✅ ' + saved + ' Provider gespeichert, ' + approved + ' mit JS-Code approved';
-    showToast('✅ ' + approved + ' Provider bereit', 'success');
-    loadRepos(); loadProviders(); loadHomeStats();
-
-  } catch(e){
-    console.error('[Scan]', e);
-    st.innerHTML = '❌ ' + e.message;
-    showToast('❌ ' + e.message, 'error');
+    // Groq Rate Limit
+    if(i < KNOWN_PROVIDERS.length-1) await new Promise(r => setTimeout(r, 2500));
   }
+
+  st.innerHTML = '✅ '+saved+' Provider gespeichert, '+approved+' mit JS-Code';
+  showToast('✅ '+approved+' Provider bereit', 'success');
+  loadRepos(); loadProviders(); loadHomeStats();
 }
+
 
 async function triggerAnalyse(){
   const groqKey = localStorage.getItem('sv_groq_key');
