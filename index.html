@@ -244,28 +244,13 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
         <div><div class="stat-val" id="s-sites">–</div><div class="stat-lab">Sites</div></div>
       </div>
     </div>
-    <div class="sec-title">AKTIVE PROVIDER</div>
-    <div class="pgrid" id="home-pgrid"><span class="spinner"></span></div>
     <div class="sec-title">SCHNELLSUCHE</div>
     <div id="quick-tags" style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:28px"></div>
-
-    <!-- CONTENT FEED -->
-    <div id="feed-wrap" style="display:none">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div class="sec-title" style="margin:0">JETZT VERFÜGBAR</div>
-        <div id="feed-tabs" style="display:flex;gap:6px">
-          <button class="btn btn-primary btn-sm feed-tab active" onclick="switchFeed('trending')">🔥 Trending</button>
-          <button class="btn btn-ghost btn-sm feed-tab" onclick="switchFeed('movies')">🎬 Filme</button>
-          <button class="btn btn-ghost btn-sm feed-tab" onclick="switchFeed('series')">📺 Serien</button>
-          <button class="btn btn-ghost btn-sm feed-tab" onclick="switchFeed('anime')">🎌 Anime</button>
-          <button class="btn btn-ghost btn-sm feed-tab" onclick="switchFeed('doku')">📹 Dokus</button>
-        </div>
-      </div>
-      <div id="content-feed" class="rgrid" style="margin-bottom:28px"></div>
-      <div id="feed-status" style="text-align:center;font-size:12px;color:var(--muted);margin-bottom:16px"></div>
-    </div>
-    <div id="feed-empty" style="text-align:center;padding:40px;color:var(--muted);font-size:13px">
-      Aktiviere einen Provider um Inhalte zu sehen
+    <div id="home-hint" style="text-align:center;padding:48px 24px;color:var(--muted);font-size:14px;background:var(--card);border:1px solid var(--border);border-radius:12px">
+      <div style="font-size:48px;margin-bottom:14px">📡</div>
+      <div style="font-weight:600;color:var(--text);margin-bottom:8px">Provider aktivieren</div>
+      <div style="font-size:13px;line-height:1.6">Gehe zu <strong style="color:var(--accent)">Provider</strong>, aktiviere mindestens einen Anbieter und suche dann nach Filmen oder Serien.</div>
+      <button class="btn btn-primary" onclick="showPage('providers')" style="margin-top:18px">→ Zu den Providern</button>
     </div>
   </div>
 
@@ -405,27 +390,33 @@ const FB_API_KEY  = 'AIzaSyDi9s3g6nyObg5mZYz_n7qgr982h2MrO0o';
 const FS_BASE     = 'https://firestore.googleapis.com/v1/projects/' + FB_PROJECT + '/databases/(default)/documents';
 const AUTH_BASE   = 'https://identitytoolkit.googleapis.com/v1';
 
-// ─── CORS Proxy mit Fallback-Chain ───────────────
-// Mehrere Proxies – erster der antwortet wird genutzt
-const PROXY_LIST = [
+// ─── CORS Proxy ──────────────────────────────────
+// Kein Ping-Test nötig – einfach beim ersten echten Request testen
+var PROXY_LIST = [
   'https://api.allorigins.win/raw?url=',
   'https://corsproxy.io/?url=',
+  'https://corsproxy.io/?',
   'https://thingproxy.freeboard.io/fetch/'
 ];
-var CORS_PROXY = PROXY_LIST[0]; // Default
+var CORS_PROXY = localStorage.getItem('sv_proxy_override') || PROXY_LIST[0];
+console.log('[Proxy] Nutze:', CORS_PROXY);
 
-// Proxy testen und besten wählen
-(async function detectProxy(){
-  const testUrl = 'https://httpbin.org/get';
-  for(var i=0; i<PROXY_LIST.length; i++){
+// Hilfsfunktion: URL über Proxy laden mit automatischem Fallback
+async function proxyGet(url, asText) {
+  // Zuerst mit aktuellem CORS_PROXY versuchen
+  var proxies = [CORS_PROXY].concat(PROXY_LIST.filter(function(p){ return p !== CORS_PROXY; })).concat(['']);
+  for(var i=0; i<proxies.length; i++){
     try{
-      var r = await fetch(PROXY_LIST[i]+encodeURIComponent(testUrl), {signal: AbortSignal.timeout(4000)});
-      if(r.ok){ CORS_PROXY = PROXY_LIST[i]; console.log('[Proxy] Nutze:', CORS_PROXY); return; }
+      var target = proxies[i] ? proxies[i] + encodeURIComponent(url) : url;
+      var r = await fetch(target, {mode:'cors'});
+      if(r.ok){
+        CORS_PROXY = proxies[i]; // Funktionierenden Proxy merken
+        return asText ? r.text() : r.json();
+      }
     } catch(_){}
   }
-  console.warn('[Proxy] Kein Proxy erreichbar – direkter Zugriff');
-  CORS_PROXY = '';
-})();
+  throw new Error('Alle Proxies fehlgeschlagen fuer: ' + url.slice(0,60));
+}
 
 // ─── Auth State ──────────────────────────────────
 window._authUser  = null;
@@ -657,7 +648,7 @@ const ProviderLoader = (() => {
     // Init
     const initId = Math.random().toString(36).slice(2);
     pending[initId]={res:()=>{},rej:e=>console.warn('[Worker init]',e.message)};
-    w.postMessage({id:initId,cmd:'init',code,proxy:CORS_PROXY});
+    w.postMessage({id:initId,cmd:'init',code,proxy:CORS_PROXY||''});
 
     _workers[pid]={w,call,stop:()=>w.terminate()};
     return _workers[pid];
@@ -720,16 +711,9 @@ const ProviderLoader = (() => {
     if(!m) throw new Error('Kein GitHub URL');
     const [,owner,repo] = m;
     const files = ['provider.js','main.js','index.js','src/provider.js'];
-    const proxies = [CORS_PROXY,'https://api.allorigins.win/raw?url=','https://corsproxy.io/?url=',''];
     for(const f of files){
       const raw = 'https://raw.githubusercontent.com/'+owner+'/'+repo+'/main/'+f;
-      for(const proxy of proxies){
-        try{
-          const url = proxy ? proxy+encodeURIComponent(raw) : raw;
-          const r = await fetch(url);
-          if(r.ok) return r.text();
-        } catch(_){}
-      }
+      try{ return await proxyGet(raw, true); } catch(_){}
     }
     throw new Error('Kein Code gefunden');
   }
@@ -978,142 +962,6 @@ function saveSettings(){
 document.getElementById('settingsModal').addEventListener('click',function(e){ if(e.target===this) closeModal(); });
 
 // ─── Home Stats ──────────────────────────────────
-// ─── Feed State ──────────────────────────────────
-var _feedCategory = 'trending';
-var _feedResults  = [];
-var _feedLoading  = false;
-
-async function loadHomeStats(){
-  try{
-    const [repos,providers] = await Promise.all([fsGet('repos').catch(()=>[]), fsGet('providers').catch(()=>[])]);
-    const sites = providers.reduce((n,p)=>n+(p.sites&&p.sites.length||0),0);
-    document.getElementById('s-repos').textContent     = repos.length||'–';
-    document.getElementById('s-providers').textContent = providers.length||'–';
-    document.getElementById('s-active').textContent    = ProviderLoader.getActive().size;
-    document.getElementById('s-sites').textContent     = sites||'–';
-    renderHomeProviders();
-    // Content Feed laden wenn Provider aktiv
-    if(ProviderLoader.getActive().size > 0){
-      loadContentFeed(_feedCategory);
-    }
-  } catch(e){ console.warn('[Home]',e.message); }
-}
-
-// ─── Content Feed ─────────────────────────────────
-var FEED_QUERIES = {
-  trending: ['trending','popular','neu','aktuell','top'],
-  movies:   ['film','movie','kino','thriller','action'],
-  series:   ['serie','staffel','season','episode'],
-  anime:    ['anime','manga','one piece','naruto','attack on titan'],
-  doku:     ['dokumentation','documentary','doku','history','nature']
-};
-
-function switchFeed(cat){
-  _feedCategory = cat;
-  document.querySelectorAll('.feed-tab').forEach(function(b){
-    b.classList.toggle('active', b.getAttribute('onclick').includes("'"+cat+"'"));
-    b.classList.toggle('btn-primary', b.getAttribute('onclick').includes("'"+cat+"'"));
-    b.classList.toggle('btn-ghost', !b.getAttribute('onclick').includes("'"+cat+"'"));
-  });
-  loadContentFeed(cat);
-}
-
-async function loadContentFeed(cat){
-  if(_feedLoading) return;
-  const active = ProviderLoader.getActive().size;
-  const feedWrap  = document.getElementById('feed-wrap');
-  const feedEmpty = document.getElementById('feed-empty');
-  const feedEl    = document.getElementById('content-feed');
-  const feedSt    = document.getElementById('feed-status');
-
-  if(active === 0){
-    feedWrap.style.display  = 'none';
-    feedEmpty.style.display = 'block';
-    return;
-  }
-  feedWrap.style.display  = 'block';
-  feedEmpty.style.display = 'none';
-  feedEl.innerHTML = '<span class="spinner"></span>';
-  feedSt.textContent = '';
-  _feedLoading = true;
-
-  try{
-    var queries = FEED_QUERIES[cat] || FEED_QUERIES.trending;
-    var query   = queries[Math.floor(Math.random() * queries.length)];
-    var results = await ProviderLoader.searchAll(query);
-
-    // Deduplizieren nach Titel
-    var seen  = {};
-    var dedup = [];
-    results.forEach(function(r){
-      var key = (r.title||r.name||'').toLowerCase().trim();
-      if(!seen[key]){ seen[key]=true; dedup.push(r); }
-    });
-
-    if(!dedup.length){
-      feedEl.innerHTML = '<div class="empty" style="grid-column:1/-1"><div>😶</div><h3>Keine Inhalte</h3><p>Probiere einen anderen Tab</p></div>';
-      feedSt.textContent = 'Suche: "'+query+'"';
-      return;
-    }
-
-    var frag = document.createDocumentFragment();
-    dedup.slice(0,24).forEach(function(r){
-      var card = document.createElement('div');
-      card.className = 'rcard';
-      card.style.cursor = 'pointer';
-      card.onclick = (function(item){ return function(){ openMedia(JSON.stringify(item)); }; })(r);
-
-      var thumbDiv = document.createElement('div');
-      thumbDiv.className = 'rthumb';
-      if(r.poster){
-        var img = document.createElement('img');
-        img.src = r.poster; img.loading = 'lazy';
-        img.onerror = function(){ this.style.display='none'; };
-        thumbDiv.appendChild(img);
-      } else {
-        thumbDiv.textContent = r.type==='series' ? '📺' : r.type==='anime' ? '🎌' : '🎬';
-      }
-      var overlay = document.createElement('div');
-      overlay.className = 'play-overlay';
-      overlay.textContent = '▶';
-      thumbDiv.appendChild(overlay);
-
-      var info = document.createElement('div');
-      info.className = 'rinfo';
-      var langBadgeHtml = r.language ? langBadge(r.language) : '';
-      info.innerHTML = '<div class="rtitle">'+esc(r.title||r.name||'–')+'</div>'
-        + '<div class="rmeta">'+esc(String(r.year||''))+' '+(r.type?'&middot; '+r.type:'')+' '+langBadgeHtml+'</div>'
-        + '<div class="rsrc">'+esc(r._providerName||'')+'</div>';
-
-      card.appendChild(thumbDiv);
-      card.appendChild(info);
-      frag.appendChild(card);
-    });
-    feedEl.innerHTML = '';
-    feedEl.appendChild(frag);
-
-    feedSt.textContent = dedup.length+' Ergebnisse · Suche: "'+query+'"';
-  } catch(e){
-    feedEl.innerHTML = '<div class="empty" style="grid-column:1/-1"><div>❌</div><h3>Fehler</h3><p>'+esc(e.message)+'</p></div>';
-  } finally{
-    _feedLoading = false;
-  }
-}
-
-function renderHomeProviders(){
-  const g = document.getElementById('home-pgrid');
-  const ps = ProviderLoader.getAll();
-  if(!ps.length){
-    g.innerHTML=`<div class="empty" style="grid-column:1/-1"><div>📦</div><h3>Keine Provider</h3><p>Starte einen GitHub Scan</p></div>`;
-    return;
-  }
-  g.innerHTML = ps.slice(0,6).map(renderPCard).join('');
-  // Quick Tags
-  const tags=['Action','Horror','Anime','Komödie','Thriller','Sci-Fi','Drama'];
-  document.getElementById('quick-tags').innerHTML = tags.map(t=>
-    `<button class="btn btn-ghost btn-sm" onclick="quickSearch('${t}')">${t}</button>`
-  ).join('');
-}
 
 function quickSearch(term){ document.getElementById('searchInput').value=term; triggerSearch(); }
 
@@ -1150,13 +998,7 @@ async function doToggle(id,btn){
     btn.classList.toggle('on',on);
     showToast(on?'✅ Provider aktiv':'⏸ Deaktiviert', on?'success':'');
     document.getElementById('s-active').textContent = ProviderLoader.getActive().size;
-    // Feed aktualisieren
-    if(on){
-      showToast('⏳ Lade Inhalte...', '');
-      setTimeout(function(){ loadContentFeed(_feedCategory); }, 800);
-    } else {
-      loadContentFeed(_feedCategory);
-    }
+
   } catch(e){ showToast('❌ '+e.message,'error'); }
   finally{ btn.disabled=false; }
 }
