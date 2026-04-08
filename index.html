@@ -457,15 +457,37 @@ async function fsReq(method, path, body) {
   const token = await getToken();
   const headers = {'Content-Type': 'application/json'};
   if (token) headers['Authorization'] = 'Bearer ' + token;
-  const r = await fetch(FS_BASE + path, {method, headers, body: body ? JSON.stringify(body) : undefined});
-  if (!r.ok) { const e = await r.json().catch(()=>({error:{message:r.status}})); throw new Error(e.error?.message || r.status); }
-  return r.json();
+  const url = FS_BASE + path;
+  const r = await fetch(url, {method, headers, body: body ? JSON.stringify(body) : undefined});
+  if (r.status === 401 || r.status === 403) {
+    // Token abgelaufen – refresh versuchen
+    const newToken = await refreshToken();
+    if (newToken) {
+      headers['Authorization'] = 'Bearer ' + newToken;
+      const r2 = await fetch(url, {method, headers, body: body ? JSON.stringify(body) : undefined});
+      if (!r2.ok) { const e = await r2.json().catch(()=>{}); throw new Error((e&&e.error&&e.error.message)||r2.status); }
+      const txt2 = await r2.text();
+      return txt2 ? JSON.parse(txt2) : {};
+    }
+    throw new Error('Nicht eingeloggt (401)');
+  }
+  if (!r.ok) {
+    const e = await r.json().catch(()=>({}));
+    throw new Error((e&&e.error&&e.error.message)||('HTTP '+r.status));
+  }
+  const txt = await r.text();
+  return txt ? JSON.parse(txt) : {};
 }
 
 async function fsGet(col) {
   await _fbReady;
-  const d = await fsReq('GET', '/' + col);
-  return (d.documents||[]).map(docToObj);
+  try {
+    const d = await fsReq('GET', '/' + col + '?pageSize=200');
+    return (d.documents||[]).map(docToObj);
+  } catch(e) {
+    console.warn('[fsGet] ' + col + ':', e.message);
+    return [];
+  }
 }
 
 async function fsSet(col, id, data) {
@@ -916,109 +938,148 @@ function openMedia(j){ Player.open(JSON.parse(j)); }
 
 // ─── Discovery: GitHub Scan ──────────────────────
 // ─── Groq-basierte Repo Discovery ───────────────
+// ─── Groq API Helper ────────────────────────────
+async function groqChat(groqKey, prompt, maxTokens) {
+  const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','Authorization':'Bearer '+groqKey},
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{role:'user', content: prompt}],
+      max_tokens: maxTokens||1500,
+      temperature: 0.2
+    })
+  });
+  if(!resp.ok) throw new Error('Groq HTTP '+resp.status);
+  const d = await resp.json();
+  return d.choices?.[0]?.message?.content || '';
+}
+
+// ─── Provider JS Code generieren ─────────────────
+async function generateProviderCode(groqKey, provider, st) {
+  st.innerHTML = '⚙ <span style="color:var(--purple)">Generiere JS-Code für ' + esc(provider.name) + '...</span>';
+
+  var prompt = [
+    'Schreibe einen JavaScript Streaming-Provider fuer StreamVault.',
+    'Provider: ' + provider.name,
+    'Websites: ' + (provider.sites||[]).join(', '),
+    'Info: ' + (provider.description||''),
+    '',
+    'Implementiere 3 Funktionen (kein import, kein module.exports):',
+    'async function search(query) { return [{id,title,year,type,poster}]; }',
+    'async function getDetails(id) { return {id,title,description,year,rating}; }',
+    'async function getStreams(id) { return [{url,quality,type,source}]; }',
+    '',
+    'Netzwerk via: proxyFetch(url) -> Response',
+    'Falls keine echten Streams: Demo HLS: https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
+    'Antworte NUR mit JavaScript, kein Markdown.'
+  ].join('\n');
+
+  const code = await groqChat(groqKey, prompt, 2000);
+  // Markdown Backticks entfernen falls vorhanden
+  // Markdown Backticks entfernen
+  code = code.replace(/^```[\w]*/m,'').replace(/```$/m,'').trim();
+  return code;
+}
+
 async function triggerScan(){
   const groqKey = localStorage.getItem('sv_groq_key');
   if(!groqKey){ showToast('⚙ Groq API Key fehlt','error'); openSettings(); return; }
   const st = document.getElementById('scan-status');
-  st.innerHTML = '🤖 <span style="color:var(--purple)">Groq sucht Streaming-Provider Repos…</span>';
-  showToast('🔍 Groq Discovery gestartet…');
+  st.innerHTML = '🤖 <span style="color:var(--purple)">Schritt 1/3: Groq sucht Provider...</span>';
+  showToast('🔍 Groq Discovery gestartet...');
 
   try{
-    const prompt = `Du bist ein Experte für Open-Source Streaming-Software.
+    // ── Schritt 1: Provider Liste von Groq holen ──
+    var listPrompt = [
+      'Liste 10 bekannte Open-Source Streaming-Provider fuer Movies und Anime.',
+      'Bekannte Beispiele: cloudstream, aniyomi-extensions.',
+      '',
+      'Antworte NUR mit JSON Array:',
+      '[{"name":"owner/repo","url":"https://github.com/owner/repo","description":"kurz",',
+      '"language":"JS|Kotlin|Python","stars":1234,"sites":["site.com"],',
+      '"qualityScore":4,"riskScore":2}]',
+      'Nur reale, aktive Projekte. Kein Markdown.'
+    ].join('\n');
+    var listPrompt = [
+      'Liste 10 bekannte Open-Source Streaming-Provider fuer Movies und Anime.',
+      'Bekannte Beispiele: cloudstream, aniyomi-extensions.',
+      '',
+      'Antworte NUR mit JSON Array (kein Markdown):',
+      '[{"name":"owner/repo","url":"https://github.com/owner/repo","description":"kurz","language":"JS|Kotlin","stars":1234,"sites":["site.com"],"qualityScore":4,"riskScore":2}]',
+      'Nur reale aktive Projekte.'
+    ].join('\n');
 
-Erstelle eine Liste von 20 realen, bekannten GitHub Repositories die Streaming-Provider, Movie-Scraper oder HLS-Scraper sind.
-Bekannte Beispiele: CloudStream-3, animixplay, cloudstream-extensions, aniyomi-extensions.
+    const listText = await groqChat(groqKey, listPrompt, 2000);
+    const listMatch = listText.match(/\[[\s\S]*\]/);
+    if(!listMatch) throw new Error('Kein JSON von Groq');
+    const providers = JSON.parse(listMatch[0]);
+    if(!providers.length) throw new Error('Leere Provider-Liste');
 
-Antworte NUR mit einem JSON Array, kein Markdown, keine Erklärungen:
-[
-  {
-    "name": "owner/reponame",
-    "url": "https://github.com/owner/reponame",
-    "description": "kurze Beschreibung",
-    "language": "Kotlin|JavaScript|Python",
-    "stars": 1234,
-    "isProvider": true,
-    "sites": ["site1.com", "site2.com"],
-    "qualityScore": 4,
-    "riskScore": 2
-  }
-]
+    st.innerHTML = '✅ ' + providers.length + ' Provider gefunden – generiere JS-Code...';
+    await new Promise(r => setTimeout(r, 500));
 
-Gib nur Repos zurück die wirklich existieren und aktiv sind. Fokus auf: Anime, Movies, Series Streaming.`;
-
-    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+groqKey},
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{role:'user', content: prompt}],
-        max_tokens: 2000,
-        temperature: 0.3
-      })
-    });
-
-    if(!resp.ok){ const e=await resp.text(); throw new Error('Groq HTTP '+resp.status+': '+e.slice(0,100)); }
-    const data = await resp.json();
-    const text = data.choices?.[0]?.message?.content || '[]';
-
-    // JSON extrahieren
-    const match = text.match(/\[[\s\S]*\]/);
-    if(!match) throw new Error('Kein JSON Array in Groq-Antwort');
-    const repos = JSON.parse(match[0]);
-
-    if(!repos.length){ st.innerHTML='⚠ Groq hat keine Repos zurückgegeben'; return; }
-
-    // In Firestore speichern + direkt als Provider wenn qualifiziert
     let saved=0, approved=0;
-    for(const repo of repos){
-      const repoId = repo.name.replace('/','_').replace(/[^a-zA-Z0-9_-]/g,'');
+
+    for(let i=0; i<providers.length; i++){
+      const p = providers[i];
+      const repoId = (p.name||'provider_'+i).replace('/','_').replace(/[^a-zA-Z0-9_-]/g,'');
+
+      st.innerHTML = '⚙ <span style="color:var(--purple)">('+(i+1)+'/'+providers.length+') Generiere Code für '+esc(p.name||repoId)+'...</span>';
+
+      // ── Schritt 2: JS Code für jeden Provider generieren ──
+      let jsCode = '';
+      try {
+        jsCode = await generateProviderCode(groqKey, p, st);
+      } catch(e) {
+        console.warn('[Scan] Code-Gen Fehler:', e.message);
+        // Fallback: Demo-Code
+        jsCode = [
+          'async function search(q){return [{id:"d1",title:q+" (Demo)",year:2024,type:"movie",poster:""}];}',
+          'async function getDetails(id){return {id:id,title:"Demo Titel",description:"Demo Provider",year:2024,rating:"7.0"};}',
+          'async function getStreams(id){return [{url:"https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",quality:"1080p",type:"hls",source:"Demo HLS"}];}'
+        ].join('\n');
+      }
+
+      // ── Schritt 3: In Firestore speichern ──
       const repoData = {
-        repoId,
-        name: repo.name,
-        url: repo.url,
-        apiUrl: 'https://api.github.com/repos/' + repo.name,
-        description: repo.description||'',
-        stars: repo.stars||0,
-        language: repo.language||'JS',
-        defaultBranch: 'main',
-        lastScan: Date.now(),
+        repoId, name: p.name||repoId, url: p.url||'',
+        description: p.description||'', stars: p.stars||0,
+        language: p.language||'JS', lastScan: Date.now(),
         aiResult: {
-          isProvider: repo.isProvider !== false,
-          language: repo.language||'JS',
-          sites: repo.sites||[],
-          qualityScore: repo.qualityScore||3,
-          riskScore: repo.riskScore||2,
-          searchLogic: 'Groq-Discovery',
-          streamLogic: 'Groq-Discovery'
+          isProvider: true, language: p.language||'JS',
+          sites: p.sites||[], qualityScore: p.qualityScore||3,
+          riskScore: p.riskScore||2,
+          searchLogic: 'Groq-Discovery', streamLogic: 'Groq-Discovery'
         },
         aiAnalysedAt: Date.now()
       };
-      try{
+
+      try {
         await fsSet('repos', repoId, repoData);
-        saved++;
-        // Auto-approve
-        if(repoData.aiResult.riskScore<=3 && repoData.aiResult.qualityScore>=3){
+        // Provider mit JS Code speichern
+        if((p.riskScore||2)<=3 && (p.qualityScore||3)>=3){
           await fsSet('providers', repoId, {
-            repoUrl: repo.url,
-            name: repo.name,
-            sites: repo.sites||[],
-            language: repo.language||'JS',
-            qualityScore: repo.qualityScore||3,
-            riskScore: repo.riskScore||2,
-            status: 'approved',
-            autoApproved: true,
+            repoUrl: p.url||'', name: p.name||repoId,
+            sites: p.sites||[], language: p.language||'JS',
+            qualityScore: p.qualityScore||3, riskScore: p.riskScore||2,
+            status: 'approved', autoApproved: true,
+            jsCode: jsCode,
             lastUpdate: Date.now()
           });
           approved++;
         }
+        saved++;
       } catch(e){ console.warn('[Scan] Firestore:', e.message); }
+
+      // Rate Limit: 2s zwischen Groq Calls
+      if(i < providers.length-1) await new Promise(r => setTimeout(r, 2000));
     }
 
-    st.innerHTML = `✅ Groq hat ${saved} Repos gefunden, ${approved} auto-approved`;
-    showToast(`✅ ${saved} Repos, ${approved} Provider`, 'success');
-    loadRepos();
-    loadProviders();
-    loadHomeStats();
+    st.innerHTML = '✅ ' + saved + ' Provider gespeichert, ' + approved + ' mit JS-Code approved';
+    showToast('✅ ' + approved + ' Provider bereit', 'success');
+    loadRepos(); loadProviders(); loadHomeStats();
+
   } catch(e){
     console.error('[Scan]', e);
     st.innerHTML = '❌ ' + e.message;
@@ -1081,6 +1142,61 @@ async function triggerAnalyse(){
     showToast(`✅ ${analysed} analysiert, ${approved} approved`,'success');
     loadRepos(); loadProviders(); loadHomeStats();
   } catch(e){ st.innerHTML='❌ '+e.message; showToast('❌ '+e.message,'error'); }
+}
+
+// ─── Discovery: Repos laden ──────────────────────
+async function loadRepos(){
+  const tb = document.getElementById('repo-tbody');
+  if(!tb) return;
+  tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:28px"><span class="spinner"></span></td></tr>';
+  try{
+    const repos = await fsGet('repos');
+    if(!repos.length){
+      tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--muted)">Noch keine Repos – starte Groq Discovery</td></tr>';
+      return;
+    }
+    tb.innerHTML = repos.map(function(r){
+      const ai = r.aiResult;
+      const badge = ai
+        ? (ai.isProvider ? '<span class="badge b-ok">Provider</span>' : '<span class="badge b-fail">Kein Provider</span>')
+        : '<span class="badge b-pending">Ausstehend</span>';
+      const q = ai ? '<span style="color:var(--green)">'+(ai.qualityScore||'?')+'/5</span>' : '-';
+      const risk = ai ? ai.riskScore||'?' : '-';
+      const rColor = !ai ? 'var(--muted)' : ai.riskScore>=4 ? 'var(--accent)' : ai.riskScore<=2 ? 'var(--green)' : 'var(--yellow)';
+      var approveBtn = (ai && ai.isProvider)
+        ? '<button class="btn btn-primary btn-sm" onclick="approveRepo(this,\'' + r.id + '\')">Approve</button>'
+        : '-';
+      var row = document.createElement('tr');
+      row.innerHTML = '<td><a href="' + esc(r.url||'#') + '" target="_blank" style="color:var(--blue);text-decoration:none;font-size:12px">' + esc(r.name||r.id||'-') + '</a>'
+        + '<div style="font-size:11px;color:var(--muted)">' + esc((r.description||'').slice(0,60)) + '</div></td>'
+        + '<td style="color:var(--yellow)">' + (r.stars||'-') + '</td>'
+        + '<td>' + badge + (ai ? ' <span class="badge b-ai">AI</span>' : '') + '</td>'
+        + '<td>' + q + '</td>'
+        + '<td style="color:' + rColor + '">' + risk + '</td>'
+        + '<td style="font-size:11px;color:var(--muted)">' + esc((ai&&ai.language)||r.language||'-') + '</td>'
+        + '<td>' + approveBtn + '</td>';
+      return row.outerHTML;
+    }).join('');
+  } catch(e){
+    tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:28px;color:var(--accent)">Fehler: '+esc(e.message)+'</td></tr>';
+  }
+}
+
+async function approveRepo(btn, rid){
+  try{
+    const repos = await fsGet('repos');
+    const r = repos.find(function(x){ return x.id===rid; });
+    if(!r || !r.aiResult) return;
+    const ai = r.aiResult;
+    await fsSet('providers', rid, {
+      repoUrl: r.url, name: r.name, sites: ai.sites||[],
+      language: ai.language||'JS', qualityScore: ai.qualityScore||3,
+      riskScore: ai.riskScore||3, status: 'approved',
+      autoApproved: false, lastUpdate: Date.now()
+    });
+    showToast('Provider approved!', 'success');
+    loadRepos();
+  } catch(e){ showToast('Fehler: '+e.message, 'error'); }
 }
 
 // ─── Utils ───────────────────────────────────────
