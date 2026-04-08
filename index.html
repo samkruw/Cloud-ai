@@ -151,6 +151,33 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 <body>
 
 <!-- SIDEBAR -->
+<!-- LOGIN SCREEN -->
+<div id="loginScreen" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:1000;align-items:center;justify-content:center;">
+  <div style="width:100%;max-width:380px;padding:20px;">
+    <div style="text-align:center;margin-bottom:32px;">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:40px;letter-spacing:4px;color:var(--accent)">STREAM<span style="color:var(--text)">VAULT</span></div>
+      <div style="font-size:13px;color:var(--muted);margin-top:6px">Bitte einloggen um fortzufahren</div>
+    </div>
+    <div id="loginError" style="display:none;padding:10px 14px;background:rgba(230,57,70,.1);border:1px solid rgba(230,57,70,.3);border-radius:8px;font-size:13px;color:var(--accent);margin-bottom:14px"></div>
+    <div class="fg"><label>E-Mail</label><input type="email" id="loginEmail" placeholder="name@domain.ch" autocomplete="email"></div>
+    <div class="fg"><label>Passwort</label><input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password"></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:11px;margin-top:6px;font-size:14px" onclick="doLogin()">Einloggen</button>
+    <div style="text-align:center;margin-top:16px">
+      <span style="font-size:12px;color:var(--muted)">Noch kein Account? </span>
+      <a href="#" style="font-size:12px;color:var(--accent);text-decoration:none" onclick="showRegister();return false">Registrieren</a>
+    </div>
+    <!-- Register Form (versteckt) -->
+    <div id="registerForm" style="display:none;margin-top:20px;padding-top:20px;border-top:1px solid var(--border)">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:14px;text-align:center">Neuen Account erstellen</div>
+      <div class="fg"><label>E-Mail</label><input type="email" id="regEmail" placeholder="name@domain.ch"></div>
+      <div class="fg"><label>Passwort (min. 6 Zeichen)</label><input type="password" id="regPassword" placeholder="••••••••"></div>
+      <button class="btn btn-ghost" style="width:100%;justify-content:center;padding:11px;margin-top:6px" onclick="doRegister()">Account erstellen</button>
+    </div>
+  </div>
+</div>
+
+<!-- APP WRAPPER -->
+<div id="appWrap" style="display:none;width:100%;min-height:100vh;">
 <nav class="sidebar">
   <div class="logo">🎬<span>VAULT</span></div>
   <div class="nav-sec">Menu</div>
@@ -188,6 +215,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
     <button class="btn btn-primary" onclick="triggerSearch()">Suchen</button>
     <button class="btn btn-ghost btn-sm" onclick="openSettings()">⚙ API Keys</button>
     <span id="fbStatus" style="font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;white-space:nowrap">● offline</span>
+    <span id="authUser" style="font-size:11px;color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+    <button class="btn btn-ghost btn-sm" onclick="doLogout()" title="Ausloggen" style="padding:4px 10px">⎋</button>
   </div>
 
   <!-- HOME -->
@@ -267,12 +296,9 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 <div class="modal-bg" id="settingsModal">
   <div class="modal">
     <h2>⚙ EINSTELLUNGEN</h2>
-    <div class="fg"><label>GitHub Token (höhere Rate Limits)</label><input type="password" id="i-gh" placeholder="ghp_xxxx"></div>
     <div class="fg"><label>Groq API Key</label><input type="password" id="i-groq" placeholder="gsk_xxxx"></div>
     <div class="fg"><label>Firebase Function Base URL</label><input type="text" id="i-fburl" placeholder="https://us-central1-PROJEKT.cloudfunctions.net"></div>
     <div class="fg"><label>CORS Proxy URL</label><input type="text" id="i-proxy" placeholder="https://us-central1-PROJEKT.cloudfunctions.net/corsProxy"></div>
-    <div class="fg"><label>Firebase API Key</label><input type="text" id="i-fbapikey" placeholder="AIza..."></div>
-    <div class="fg"><label>Firebase Project ID</label><input type="text" id="i-fbproject" placeholder="mein-projekt-id"></div>
     <div class="mact">
       <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
       <button class="btn btn-primary" onclick="saveSettings()">💾 Speichern</button>
@@ -281,6 +307,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 </div>
 
 <div id="toast"></div>
+</div><!-- /appWrap -->
 
 <!-- ════════════════════════════════════════════════════════════
      SCRIPTS – alles inline in einer Datei
@@ -299,32 +326,38 @@ function loadScript(src) {
   });
 }
 
+const FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyDi9s3g6nyObg5mZYz_n7qgr982h2MrO0o",
+  authDomain:        "cloud-ai-a1722.firebaseapp.com",
+  projectId:         "cloud-ai-a1722",
+  storageBucket:     "cloud-ai-a1722.firebasestorage.app",
+  messagingSenderId: "94852405834",
+  appId:             "1:94852405834:web:4bba853d9a20807b84a4b3"
+};
+
 window._fbReady = (async () => {
-  const apiKey    = localStorage.getItem('sv_fb_apikey')   || '';
-  const projectId = localStorage.getItem('sv_fb_project')  || '';
-
-  if (!apiKey || !projectId) {
-    console.warn('[FB] Nicht konfiguriert – Demo-Modus');
-    window.db = createFbStub();
-    return;
-  }
-
   await loadScript(FB_BASE + 'firebase-app-compat.js');
   await loadScript(FB_BASE + 'firebase-firestore-compat.js');
-
-  if (!firebase.apps.length) {
-    firebase.initializeApp({
-      apiKey,
-      authDomain:      projectId + '.firebaseapp.com',
-      projectId,
-      storageBucket:   projectId + '.appspot.com',
-      messagingSenderId: localStorage.getItem('sv_fb_sender') || '',
-      appId:           localStorage.getItem('sv_fb_appid')   || ''
-    });
-  }
-  window.db = firebase.firestore();
-  document.getElementById('fbStatus').textContent = '● firebase';
+  await loadScript(FB_BASE + 'firebase-auth-compat.js');
+  if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+  window.db   = firebase.firestore();
+  window.auth = firebase.auth();
+  document.getElementById('fbStatus').textContent = '● cloud-ai-a1722';
   document.getElementById('fbStatus').style.color = 'var(--green)';
+  // Auth guard: zeige Login wenn nicht eingeloggt
+  await new Promise(resolve => {
+    auth.onAuthStateChanged(user => {
+      if (user) {
+        document.getElementById('authUser').textContent = user.email;
+        document.getElementById('loginScreen').style.display = 'none';
+        document.getElementById('appWrap').style.display = 'flex';
+      } else {
+        document.getElementById('loginScreen').style.display = 'flex';
+        document.getElementById('appWrap').style.display = 'none';
+      }
+      resolve();
+    });
+  });
 })().catch(e => {
   console.warn('[FB] Fehler:', e.message);
   window.db = createFbStub();
@@ -673,9 +706,8 @@ function openSettings(){
 function closeModal(){ document.getElementById('settingsModal').classList.remove('open'); }
 function saveSettings(){
   const map={
-    'i-gh':'sv_gh_token','i-groq':'sv_groq_key',
+    'i-groq':'sv_groq_key',
     'i-fburl':'sv_fb_func_url','i-proxy':'sv_proxy',
-    'i-fbapikey':'sv_fb_apikey','i-fbproject':'sv_fb_project'
   };
   Object.entries(map).forEach(([inputId,storeKey])=>{
     const v=document.getElementById(inputId).value.trim();
@@ -871,6 +903,65 @@ async function approveRepo(rid){
 
 // ─── Utils ───────────────────────────────────────
 function esc(s){ if(!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ─── Auth Functions ──────────────────────────────
+async function doLogin(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const pw    = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  errEl.style.display='none';
+  if(!email||!pw){ errEl.textContent='E-Mail und Passwort eingeben'; errEl.style.display='block'; return; }
+  const btn = event.target; btn.disabled=true; btn.textContent='Lade…';
+  try{
+    await auth.signInWithEmailAndPassword(email, pw);
+  } catch(e){
+    const msgs = {
+      'auth/user-not-found':'Kein Account mit dieser E-Mail.',
+      'auth/wrong-password':'Falsches Passwort.',
+      'auth/invalid-email':'Ungültige E-Mail-Adresse.',
+      'auth/too-many-requests':'Zu viele Versuche – kurz warten.',
+      'auth/invalid-credential':'E-Mail oder Passwort falsch.'
+    };
+    errEl.textContent = msgs[e.code]||e.message;
+    errEl.style.display='block';
+  } finally{ btn.disabled=false; btn.textContent='Einloggen'; }
+}
+
+async function doRegister(){
+  const email = document.getElementById('regEmail').value.trim();
+  const pw    = document.getElementById('regPassword').value;
+  const errEl = document.getElementById('loginError');
+  errEl.style.display='none';
+  if(!email||!pw){ errEl.textContent='E-Mail und Passwort eingeben'; errEl.style.display='block'; return; }
+  if(pw.length<6){ errEl.textContent='Passwort mind. 6 Zeichen'; errEl.style.display='block'; return; }
+  try{
+    await auth.createUserWithEmailAndPassword(email, pw);
+  } catch(e){
+    const msgs = {
+      'auth/email-already-in-use':'Diese E-Mail ist bereits registriert.',
+      'auth/weak-password':'Passwort zu schwach.',
+      'auth/invalid-email':'Ungültige E-Mail-Adresse.'
+    };
+    errEl.textContent = msgs[e.code]||e.message;
+    errEl.style.display='block';
+  }
+}
+
+function showRegister(){
+  const f=document.getElementById('registerForm');
+  f.style.display = f.style.display==='none'?'block':'none';
+}
+
+async function doLogout(){
+  if(window.auth) await auth.signOut();
+  document.getElementById('authUser').textContent='';
+  document.getElementById('loginEmail').value='';
+  document.getElementById('loginPassword').value='';
+  document.getElementById('loginError').style.display='none';
+}
+
+document.getElementById('loginPassword').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
+document.getElementById('loginEmail').addEventListener('keydown',e=>{ if(e.key==='Enter') document.getElementById('loginPassword').focus(); });
 
 // ─── Enter-Taste Suche ───────────────────────────
 document.getElementById('searchInput').addEventListener('keydown',e=>{ if(e.key==='Enter') triggerSearch(); });
