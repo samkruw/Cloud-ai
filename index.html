@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Codebeautify.org Text to HTML Converter</title>
+	</head>
+	<body>
+		<p>
+			<!DOCTYPE html>
+			<html lang="de">
+				<head>
+					<meta charset="UTF-8">
+						<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+							<title>StreamHub - CloudStream Alternative</title>
+							<link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
+							<style> 
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box; 
+        } 
+        body { 
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; 
+            background: #0a0a0a; 
+            color: #ededed; 
+            line-height: 1.5; 
+        } 
+        header { 
+            background: #1f1f1f; 
+            padding: 1rem 2rem; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            border-bottom: 1px solid #333; 
+        } 
+        nav a { 
+            color: #ccc; 
+            text-decoration: none; 
+            margin-left: 1.5rem; 
+            font-weight: 500; 
+            cursor: pointer; 
+        } 
+        nav a:hover { color: #ff9800; } 
+        main { 
+            max-width: 1400px; 
+            margin: 2rem auto; 
+            padding: 0 1rem; 
+        } 
+        .card-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); 
+            gap: 1.5rem; 
+            margin-top: 1.5rem; 
+        } 
+        .card { 
+            background: #1e1e1e; 
+            border-radius: 12px; 
+            overflow: hidden; 
+            transition: transform 0.2s; 
+            cursor: pointer; 
+        } 
+        .card:hover { transform: scale(1.02); } 
+        .card img { 
+            width: 100%; 
+            height: 300px; 
+            object-fit: cover; 
+            background: #2c2c2c; 
+        } 
+        .card h3 { 
+            padding: 0.75rem 1rem 0.25rem; 
+            font-size: 1.1rem; 
+        } 
+        .card p { 
+            padding: 0 1rem 1rem; 
+            color: #aaa; 
+            font-size: 0.85rem; 
+        } 
+        .search-box { 
+            display: flex; 
+            gap: 0.5rem; 
+            margin-bottom: 2rem; 
+        } 
+        .search-box input { 
+            flex: 1; 
+            padding: 0.75rem; 
+            border: none; 
+            border-radius: 8px; 
+            background: #2c2c2c; 
+            color: white; 
+            font-size: 1rem; 
+        } 
+        .search-box button { 
+            background: #ff9800; 
+            border: none; 
+            padding: 0 1.5rem; 
+            border-radius: 8px; 
+            font-weight: bold; 
+            cursor: pointer; 
+        } 
+        .provider-badge { 
+            display: inline-block; 
+            background: #2c6e2c; 
+            padding: 0.2rem 0.6rem; 
+            border-radius: 20px; 
+            font-size: 0.7rem; 
+            margin: 0.5rem 1rem; 
+        } 
+        .episode-list { 
+            list-style: none; 
+            margin: 1rem 0; 
+        } 
+        .episode-list li { 
+            background: #252525; 
+            margin: 0.5rem 0; 
+            padding: 0.75rem; 
+            border-radius: 8px; 
+            cursor: pointer; 
+        } 
+        .player-container { 
+            background: black; 
+            border-radius: 12px; 
+            overflow: hidden; 
+        } 
+        .video-js { 
+            width: 100%; 
+            height: auto; 
+            aspect-ratio: 16 / 9; 
+        } 
+        .loader { 
+            text-align: center; 
+            padding: 2rem; 
+            color: #ff9800; 
+        } 
+        button.back-btn { 
+            background: none; 
+            border: none; 
+            color: #ff9800; 
+            cursor: pointer; 
+            font-size: 1rem; 
+            margin-bottom: 1rem; 
+        } 
+    </style>
+						</head>
+						<body>
+							<header>
+								<h1>🎬 StreamHub</h1>
+								<nav>
+									<a data-page="home">🏠 Home</a>
+									<a data-page="search">🔍 Suche</a>
+								</nav>
+							</header>
+							<main id="app"></main>
+							<!-- Bibliotheken von CDN -->
+							<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+							<script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+							<!-- Firebase SDK -->
+							<script type="module"> 
+    // ======================== Firebase Config (HIER EIGENE WERTE EINTRAGEN) ======================== 
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js"; 
+    import { getFirestore, collection, getDocs, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js"; 
+ 
+    const firebaseConfig = { 
+        apiKey: "DEIN_API_KEY", 
+        authDomain: "DEIN_PROJEKT.firebaseapp.com", 
+        projectId: "DEIN_PROJEKT", 
+        storageBucket: "DEIN_PROJEKT.appspot.com", 
+        messagingSenderId: "XXXX", 
+        appId: "XXXX" 
+    }; 
+ 
+    const app = initializeApp(firebaseConfig); 
+    const db = getFirestore(app); 
+ 
+    // ======================== Globaler State ======================== 
+    let activeProviders = [];     // Array von Provider-Objekten mit Worker-API 
+    let currentMediaId = null; 
+    let currentProvider = null; 
+    const appDiv = document.getElementById('app'); 
+ 
+    // ======================== IndexedDB Cache für Provider-Code ======================== 
+    const DB_NAME = 'ProviderCache'; 
+    const STORE_NAME = 'providers'; 
+ 
+    async function openDB() { 
+        return new Promise((resolve, reject) => { 
+            const request = indexedDB.open(DB_NAME, 1); 
+            request.onupgradeneeded = () => { 
+                const db = request.result; 
+                if (!db.objectStoreNames.contains(STORE_NAME)) { 
+                    db.createObjectStore(STORE_NAME, { keyPath: 'id' }); 
+                } 
+            }; 
+            request.onsuccess = () => resolve(request.result); 
+            request.onerror = () => reject(request.error); 
+        }); 
+    } 
+ 
+    async function getCachedProvider(id) { 
+        const db = await openDB(); 
+        return new Promise((resolve) => { 
+            const tx = db.transaction(STORE_NAME, 'readonly'); 
+            const store = tx.objectStore(STORE_NAME); 
+            const get = store.get(id); 
+            get.onsuccess = () => resolve(get.result?.code); 
+            get.onerror = () => resolve(null); 
+        }); 
+    } 
+ 
+    async function cacheProvider(id, code) { 
+        const db = await openDB(); 
+        const tx = db.transaction(STORE_NAME, 'readwrite'); 
+        const store = tx.objectStore(STORE_NAME); 
+        store.put({ id, code }); 
+    } 
+ 
+    // ======================== Worker Sandbox erstellen ======================== 
+    // Die Proxy-URL muss auf deine Firebase Function zeigen (CORS-Proxy) 
+    const PROXY_BASE = "https://us-central1-DEIN_PROJEKT.cloudfunctions.net/corsProxy?url="; 
+ 
+    function createProviderSandbox(providerCode, providerId) { 
+        const blob = new Blob([` 
+            const providerCode = ${JSON.stringify(providerCode)}; 
+            const providerId = "${providerId}"; 
+            const PROXY_BASE = "${PROXY_BASE}"; 
+             
+            async function safeFetch(url, options = {}) { 
+                const proxyUrl = PROXY_BASE + encodeURIComponent(url); 
+                const response = await fetch(proxyUrl, { 
+                    method: options.method || 'GET', 
+                    headers: options.headers || {}, 
+                    body: options.body 
+                }); 
+                return response; 
+            } 
+             
+            const module = { exports: {} }; 
+            const require = () => {}; 
+             
+            const executeProvider = new Function('module', 'exports', 'fetch', 'safeFetch', providerCode); 
+            executeProvider(module, module.exports, fetch, safeFetch); 
+            const provider = module.exports; 
+             
+            self.onmessage = async (event) => { 
+                const { type, id, query, payload } = event.data; 
+                try { 
+                    if (type === 'search') { 
+                        const results = await provider.search(query); 
+                        self.postMessage({ type: 'searchResult', id, results }); 
+                    } 
+                    else if (type === 'getDetails') { 
+                        const details = await provider.getDetails(payload.id); 
+                        self.postMessage({ type: 'detailsResult', id, details }); 
+                    } 
+                    else if (type === 'getStreams') { 
+                        const streams = await provider.getStreams(payload.id); 
+                        self.postMessage({ type: 'streamsResult', id, streams }); 
+                    } 
+                } catch (err) { 
+                    self.postMessage({ type: 'error', id, error: err.message }); 
+                } 
+            }; 
+        `], { type: 'application/javascript' }); 
+         
+        const worker = new Worker(URL.createObjectURL(blob)); 
+        return worker; 
+    } 
+ 
+    // ======================== Provider aus Firestore laden ======================== 
+    async function loadActiveProviders() { 
+        const providersRef = collection(db, 'providers'); 
+        const q = query(providersRef, where('status', '==', 'approved')); 
+        const snapshot = await getDocs(q); 
+         
+        const providers = []; 
+        for (const doc of snapshot.docs) { 
+            const data = doc.data(); 
+            const providerId = doc.id; 
+            let code = await getCachedProvider(providerId); 
+             
+            if (!code) { 
+                const repoUrl = data.repoUrl; 
+                const rawJsUrl = repoUrl.replace('github.com', 'raw.githubusercontent.com') + '/main/provider.js'; 
+                try { 
+                    const resp = await fetch(rawJsUrl); 
+                    code = await resp.text(); 
+                    await cacheProvider(providerId, code); 
+                } catch (err) { 
+                    console.error(`Provider ${providerId} Code nicht ladbar`, err); 
+                    continue; 
+                } 
+            } 
+             
+            const worker = createProviderSandbox(code, providerId); 
+            providers.push({ 
+                id: providerId, 
+                name: data.name || providerId, 
+                sites: data.sites || [], 
+                worker, 
+                search: (query) => new Promise((resolve, reject) => { 
+                    const msgId = Math.random(); 
+                    const handler = (e) => { 
+                        if (e.data.id === msgId) { 
+                            worker.removeEventListener('message', handler); 
+                            if (e.data.type === 'searchResult') resolve(e.data.results); 
+                            else reject(new Error(e.data.error)); 
+                        } 
+                    }; 
+                    worker.addEventListener('message', handler); 
+                    worker.postMessage({ type: 'search', id: msgId, query }); 
+                }), 
+                getDetails: (mediaId) => new Promise((resolve, reject) => { 
+                    const msgId = Math.random(); 
+                    const handler = (e) => { 
+                        if (e.data.id === msgId) { 
+                            worker.removeEventListener('message', handler); 
+                            if (e.data.type === 'detailsResult') resolve(e.data.details); 
+                            else reject(new Error(e.data.error)); 
+                        } 
+                    }; 
+                    worker.addEventListener('message', handler); 
+                    worker.postMessage({ type: 'getDetails', id: msgId, payload: { id: mediaId } }); 
+                }), 
+                getStreams: (mediaId) => new Promise((resolve, reject) => { 
+                    const msgId = Math.random(); 
+                    const handler = (e) => { 
+                        if (e.data.id === msgId) { 
+                            worker.removeEventListener('message', handler); 
+                            if (e.data.type === 'streamsResult') resolve(e.data.streams); 
+                            else reject(new Error(e.data.error)); 
+                        } 
+                    }; 
+                    worker.addEventListener('message', handler); 
+                    worker.postMessage({ type: 'getStreams', id: msgId, payload: { id: mediaId } }); 
+                }) 
+            }); 
+        } 
+        return providers; 
+    } 
+ 
+    // ======================== Player ======================== 
+    let currentPlayer = null; 
+    function initPlayer(elementId) { 
+        if (currentPlayer) currentPlayer.dispose(); 
+        currentPlayer = videojs(elementId, { 
+            controls: true, 
+            autoplay: false, 
+            preload: 'auto', 
+            fluid: true, 
+            html5: { hls: { enableLowInitialPlaylist: true } } 
+        }); 
+        return currentPlayer; 
+    } 
+    async function playStream(url, type = 'hls') { 
+        if (!currentPlayer) return; 
+        if (type === 'hls' && Hls.isSupported()) { 
+            const hls = new Hls(); 
+            hls.loadSource(url); 
+            hls.attachMedia(currentPlayer.tech_.el()); 
+            currentPlayer.play(); 
+        } else if (currentPlayer.canPlayType('application/vnd.apple.mpegurl')) { 
+            currentPlayer.src({ src: url, type: 'application/x-mpegURL' }); 
+            currentPlayer.play(); 
+        } else { 
+            currentPlayer.src(url); 
+            currentPlayer.play(); 
+        } 
+    } 
+ 
+    // ======================== UI Rendering ======================== 
+    function renderHome() { 
+        appDiv.innerHTML = ` 
+            
+								<h2>📺 Installierte Provider</h2>
+								<div class="card-grid" id="providerGrid"></div>
+								<h2 style="margin-top: 2rem;">🔍 Schnellsuche</h2>
+								<div class="search-box">
+									<input type="text" id="globalSearchInput" placeholder="Film oder Serie suchen...">
+										<button id="globalSearchBtn">Suchen</button>
+									</div>
+									<div id="globalResults" class="card-grid"></div> 
+        `; 
+        const grid = document.getElementById('providerGrid'); 
+        activeProviders.forEach(prov => { 
+            const card = document.createElement('div'); 
+            card.className = 'card'; 
+            card.innerHTML = ` 
+                
+									<div style="padding:1rem">
+										<h3>${prov.name}</h3>
+										<div class="provider-badge">Aktiv</div>
+										<p>Sites: ${prov.sites?.join(', ') || '?'}</p>
+									</div> 
+            `; 
+            grid.appendChild(card); 
+        }); 
+        document.getElementById('globalSearchBtn').onclick = async () => { 
+            const query = document.getElementById('globalSearchInput').value; 
+            if (!query) return; 
+            const resultsDiv = document.getElementById('globalResults'); 
+            resultsDiv.innerHTML = '
+									<div class="loader">Suche läuft über alle Provider...</div>'; 
+            const allResults = []; 
+            for (const prov of activeProviders) { 
+                try { 
+                    const res = await prov.search(query); 
+                    allResults.push(...res.map(r => ({ ...r, providerId: prov.id, providerName: prov.name }))); 
+                } catch(e) { console.warn(prov.name, e); } 
+            } 
+            displayResults(allResults); 
+        }; 
+    } 
+ 
+    function displayResults(items) { 
+        const container = document.getElementById('globalResults'); 
+        if (!container) return; 
+        container.innerHTML = ''; 
+        items.forEach(item => { 
+            const card = document.createElement('div'); 
+            card.className = 'card'; 
+            card.innerHTML = ` 
+                
+									<img src="${item.poster || 'https://via.placeholder.com/300x400?text=No+Image'}" alt="${item.title}">
+										<h3>${item.title}</h3>
+										<p>${item.year || ''} • ${item.providerName}</p> 
+            `; 
+            card.onclick = () => showDetails(item.id, item.providerId); 
+            container.appendChild(card); 
+        }); 
+    } 
+ 
+    async function showDetails(mediaId, providerId) { 
+        const provider = activeProviders.find(p => p.id === providerId); 
+        if (!provider) return; 
+        currentProvider = provider; 
+        currentMediaId = mediaId; 
+        const details = await provider.getDetails(mediaId); 
+        appDiv.innerHTML = ` 
+            
+										<button class="back-btn" id="backBtn">← Zurück</button>
+										<div style="display:flex; gap:2rem; flex-wrap:wrap; margin-top:1rem;">
+											<img src="${details.poster || ''}" style="width:250px; border-radius:12px;">
+												<div style="flex:1">
+													<h2>${details.title}</h2>
+													<p>${details.plot || ''}</p>
+													<p>
+														<strong>Jahr:</strong> ${details.year || '-'}
+													</p>
+													<h3>Episoden</h3>
+													<ul class="episode-list" id="episodeList"></ul>
+												</div>
+											</div> 
+        `; 
+        document.getElementById('backBtn').onclick = () => renderHome(); 
+        const epList = document.getElementById('episodeList'); 
+        for (const ep of details.episodes || []) { 
+            const li = document.createElement('li'); 
+            li.textContent = `${ep.season || 1}x${ep.episode} - ${ep.title}`; 
+            li.onclick = async () => { 
+                const streams = await provider.getStreams(ep.id); 
+                if (streams && streams.length) { 
+                    showPlayer(streams[0].url, streams[0].type || 'hls'); 
+                } 
+            }; 
+            epList.appendChild(li); 
+        } 
+    } 
+ 
+    function showPlayer(url, type) { 
+        appDiv.innerHTML = ` 
+            
+											<button class="back-btn" id="playerBackBtn">← Zurück</button>
+											<div class="player-container">
+												<video id="videoPlayer" class="video-js vjs-default-skin" controls></video>
+											</div> 
+        `; 
+        document.getElementById('playerBackBtn').onclick = () => showDetails(currentMediaId, currentProvider.id); 
+        initPlayer('videoPlayer'); 
+        playStream(url, type); 
+    } 
+ 
+    // ======================== Navigation & Start ======================== 
+    window.addEventListener('load', async () => { 
+        activeProviders = await loadActiveProviders(); 
+        renderHome(); 
+         
+        document.querySelectorAll('nav a').forEach(link => { 
+            link.onclick = (e) => { 
+                e.preventDefault(); 
+                const page = link.dataset.page; 
+                if (page === 'home') renderHome(); 
+                if (page === 'search') { 
+                    appDiv.innerHTML = ` 
+                        
+											<h2>🔎 Globale Suche</h2>
+											<div class="search-box">
+												<input type="text" id="searchInput" placeholder="Titel...">
+													<button id="searchBtn">Suchen</button>
+												</div>
+												<div id="searchResults" class="card-grid"></div> 
+                    `; 
+                    document.getElementById('searchBtn').onclick = async () => { 
+                        const q = document.getElementById('searchInput').value; 
+                        const resultsDiv = document.getElementById('searchResults'); 
+                        resultsDiv.innerHTML = '
+												<div class="loader">Suche...</div>'; 
+                        let all = []; 
+                        for (const prov of activeProviders) { 
+                            const res = await prov.search(q); 
+                            all.push(...res.map(r => ({ ...r, providerId: prov.id, providerName: prov.name }))); 
+                        } 
+                        displayResults(all); 
+                    }; 
+                } 
+            }; 
+        }); 
+    }); 
+
+											</script>
+										</body>
+									</html>
+								</p>
+							</body>
+						</html>
