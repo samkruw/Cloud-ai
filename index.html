@@ -297,7 +297,6 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
   <div class="modal">
     <h2>⚙ EINSTELLUNGEN</h2>
     <div class="fg"><label>Groq API Key</label><input type="password" id="i-groq" placeholder="gsk_xxxx"></div>
-    <div class="fg"><label>Firebase Function Base URL</label><input type="text" id="i-fburl" placeholder="https://us-central1-PROJEKT.cloudfunctions.net"></div>
     <div class="fg"><label>CORS Proxy URL</label><input type="text" id="i-proxy" placeholder="https://us-central1-PROJEKT.cloudfunctions.net/corsProxy"></div>
     <div class="mact">
       <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
@@ -697,7 +696,6 @@ function showPage(id){
 function openSettings(){
   document.getElementById('i-gh').value      = localStorage.getItem('sv_gh_token')||'';
   document.getElementById('i-groq').value    = localStorage.getItem('sv_groq_key')||'';
-  document.getElementById('i-fburl').value   = localStorage.getItem('sv_fb_func_url')||'';
   document.getElementById('i-proxy').value   = localStorage.getItem('sv_proxy')||'';
   document.getElementById('i-fbapikey').value= localStorage.getItem('sv_fb_apikey')||'';
   document.getElementById('i-fbproject').value=localStorage.getItem('sv_fb_project')||'';
@@ -707,7 +705,7 @@ function closeModal(){ document.getElementById('settingsModal').classList.remove
 function saveSettings(){
   const map={
     'i-groq':'sv_groq_key',
-    'i-fburl':'sv_fb_func_url','i-proxy':'sv_proxy',
+    'i-proxy':'sv_proxy',
   };
   Object.entries(map).forEach(([inputId,storeKey])=>{
     const v=document.getElementById(inputId).value.trim();
@@ -828,34 +826,145 @@ async function triggerSearch(){
 function openMedia(j){ Player.open(JSON.parse(j)); }
 
 // ─── Discovery: GitHub Scan ──────────────────────
+// ─── GitHub Search Keywords ──────────────────────
+const GH_KEYWORDS = [
+  'cloudstream provider',
+  'movie scraper hls',
+  'anime scraper javascript',
+  'streaming provider m3u8',
+  'video scraper hls javascript',
+  'hls streaming provider'
+];
+
 async function triggerScan(){
-  const url=localStorage.getItem('sv_fb_func_url');
-  if(!url){ showToast('⚙ Firebase URL fehlt in Einstellungen','error'); openSettings(); return; }
-  const st=document.getElementById('scan-status');
-  if(st) st.innerHTML='⏳ <span style="color:var(--yellow)">Scanne GitHub…</span>';
-  showToast('🔍 Scan gestartet…');
+  const groqKey = localStorage.getItem('sv_groq_key');
+  if(!groqKey){ showToast('⚙ Groq API Key fehlt','error'); openSettings(); return; }
+  const st = document.getElementById('scan-status');
+  st.innerHTML = '⏳ <span style="color:var(--yellow)">Scanne GitHub…</span>';
+  showToast('🔍 GitHub Scan gestartet…');
+
   try{
-    const r=await fetch(url+'/scanGithubRepos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({triggered:'manual'})});
-    const d=await r.json();
-    if(st) st.innerHTML=`✅ Scan fertig – ${d.found||0} Repos gefunden`;
-    showToast(`✅ ${d.found||0} Repos gescannt`,'success');
+    const found = new Map();
+    for(const kw of GH_KEYWORDS){
+      try{
+        const url = 'https://api.github.com/search/repositories?q='
+          + encodeURIComponent(kw) + '&sort=stars&order=desc&per_page=20';
+        const r = await fetch(url, {headers:{'Accept':'application/vnd.github.v3+json'}});
+        if(!r.ok) continue;
+        const data = await r.json();
+        for(const repo of (data.items||[])){
+          if(!found.has(repo.id)){
+            found.set(repo.id, {
+              repoId: String(repo.id),
+              name: repo.full_name,
+              url: repo.html_url,
+              apiUrl: repo.url,
+              description: repo.description||'',
+              stars: repo.stargazers_count,
+              language: repo.language||'',
+              defaultBranch: repo.default_branch||'main',
+              lastScan: Date.now()
+            });
+          }
+        }
+        await new Promise(r=>setTimeout(r,800));
+      } catch(_){}
+    }
+
+    // In Firestore speichern
+    let saved = 0;
+    for(const [,repo] of found){
+      try{ await fsSet('repos', repo.repoId, repo); saved++; } catch(_){}
+    }
+
+    st.innerHTML = `✅ Scan fertig – ${saved} Repos gefunden`;
+    showToast(`✅ ${saved} Repos gescannt`, 'success');
     loadRepos();
-  } catch(e){ if(st) st.innerHTML='❌ '+e.message; showToast('❌ '+e.message,'error'); }
+  } catch(e){ st.innerHTML='❌ '+e.message; showToast('❌ '+e.message,'error'); }
 }
 
 async function triggerAnalyse(){
-  const url=localStorage.getItem('sv_fb_func_url');
-  if(!url){ openSettings(); return; }
-  const st=document.getElementById('scan-status');
-  if(st) st.innerHTML='🤖 <span style="color:var(--purple)">Groq analysiert…</span>';
-  showToast('🤖 KI-Analyse läuft…');
+  const groqKey = localStorage.getItem('sv_groq_key');
+  if(!groqKey){ showToast('⚙ Groq API Key fehlt','error'); openSettings(); return; }
+  const st = document.getElementById('scan-status');
+  st.innerHTML = '🤖 <span style="color:var(--purple)">Groq analysiert Repos…</span>';
+  showToast('🤖 KI-Analyse gestartet…');
+
   try{
-    const r=await fetch(url+'/analyseRepos',{method:'POST',headers:{'Content-Type':'application/json'}});
-    const d=await r.json();
-    if(st) st.innerHTML=`✅ ${d.analysed||0} Repos analysiert, ${d.approved||0} approved`;
-    showToast(`✅ ${d.analysed||0} analysiert`,'success');
+    const repos = await fsGet('repos');
+    const pending = repos.filter(r => !r.aiResult);
+    if(!pending.length){ st.innerHTML='ℹ Alle Repos bereits analysiert'; showToast('ℹ Nichts zu analysieren'); return; }
+
+    let analysed=0, approved=0;
+    for(const repo of pending.slice(0,15)){ // max 15 pro Run (Rate Limit)
+      try{
+        st.innerHTML = `🤖 <span style="color:var(--purple)">Analysiere ${esc(repo.name)} (${analysed+1}/${Math.min(pending.length,15)})…</span>`;
+        const result = await analyseRepoWithGroq(repo, groqKey);
+        await fsSet('repos', repo.id, {aiResult: result, aiAnalysedAt: Date.now()});
+
+        // Auto-approve wenn gut
+        if(result.isProvider && result.riskScore<=3 && result.qualityScore>=3){
+          await fsSet('providers', repo.id, {
+            repoUrl: repo.url, name: repo.name,
+            sites: result.sites||[], language: result.language||'JS',
+            qualityScore: result.qualityScore, riskScore: result.riskScore,
+            status:'approved', autoApproved:true, lastUpdate:Date.now()
+          });
+          approved++;
+        }
+        analysed++;
+        await new Promise(r=>setTimeout(r,2200)); // Groq Rate Limit
+      } catch(e){ console.warn('[Analyse]',repo.name,e.message); }
+    }
+
+    st.innerHTML = `✅ ${analysed} Repos analysiert, ${approved} auto-approved`;
+    showToast(`✅ ${analysed} analysiert, ${approved} approved`,'success');
     loadRepos();
-  } catch(e){ if(st) st.innerHTML='❌ '+e.message; showToast('❌ '+e.message,'error'); }
+  } catch(e){ st.innerHTML='❌ '+e.message; showToast('❌ '+e.message,'error'); }
+}
+
+async function analyseRepoWithGroq(repo, groqKey){
+  // README laden (öffentlich, kein Token nötig)
+  let readme='', files=[], codeSnippet='';
+  try{
+    const rr = await fetch(`${repo.apiUrl}/readme`,{headers:{'Accept':'application/vnd.github.v3+json'}});
+    if(rr.ok){ const d=await rr.json(); readme=atob(d.content||'').slice(0,1500); }
+  } catch(_){}
+  try{
+    const cr = await fetch(`${repo.apiUrl}/contents`,{headers:{'Accept':'application/vnd.github.v3+json'}});
+    if(cr.ok){ const d=await cr.json(); if(Array.isArray(d)) files=d.map(f=>f.name).slice(0,20); }
+  } catch(_){}
+
+  const prompt = `Analysiere dieses GitHub Repository. Antworte NUR mit JSON, kein Markdown.
+
+Repo: ${repo.name}
+Beschreibung: ${repo.description||'–'}
+Sprache: ${repo.language||'–'}
+Stars: ${repo.stars||0}
+Dateien: ${files.join(', ')}
+README: ${readme.slice(0,800)}
+
+JSON-Format:
+{"isProvider":boolean,"language":"JS|Python|Kotlin|andere","sites":["array"],"searchLogic":"kurz","streamLogic":"kurz","riskScore":1-5,"qualityScore":1-5}
+
+riskScore: 1=sicher 5=gefährlich. qualityScore: 1=schlecht 5=top.`;
+
+  const resp = await fetch('https://api.groq.com/openai/v1/chat/completions',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+groqKey},
+    body: JSON.stringify({
+      model:'llama-3.3-70b-versatile',
+      messages:[{role:'user',content:prompt}],
+      max_tokens:300, temperature:0.1
+    })
+  });
+  if(!resp.ok) throw new Error('Groq HTTP '+resp.status);
+  const data = await resp.json();
+  const text = data.choices?.[0]?.message?.content||'{}';
+  try{
+    const m = text.match(/\{[\s\S]*\}/);
+    return m ? JSON.parse(m[0]) : {isProvider:false,riskScore:5,qualityScore:1};
+  } catch{ return {isProvider:false,riskScore:5,qualityScore:1}; }
 }
 
 async function loadRepos(){
